@@ -1,233 +1,369 @@
 """
-Unit tests for the models module.
+Tests for zeropath.models
+
+Verifies that all Pydantic models construct correctly, serialize to the
+right JSON shape (aliases intact), and enforce type constraints.
 """
 
 import pytest
 
 from zeropath.models import (
     AccessControl,
+    AssetFlow,
+    CallType,
     Contract,
+    ContractLanguage,
+    Event,
+    ExternalDependency,
     Function,
     FunctionCall,
     FunctionSignature,
     Parameter,
+    ProtocolGraph,
+    ProxyRelationship,
+    ProxyType,
     StateVariable,
-    Visibility,
     StateVariableType,
-    CallType,
-    AccessType,
+    StorageSlotInfo,
+    Visibility,
+    VersionDiff,
 )
 
 
-class TestStateVariable:
-    """Tests for StateVariable model."""
-
-    def test_create_simple_state_variable(self):
-        """Test creating a simple state variable."""
-        var = StateVariable(
-            name="balance",
-            type="uint256",
-            visibility=Visibility.PRIVATE,
-            type_category=StateVariableType.PRIMITIVE,
-        )
-        assert var.name == "balance"
-        assert var.type_ == "uint256"
-        assert var.visibility == Visibility.PRIVATE
-        assert var.is_constant is False
-
-    def test_state_variable_with_defaults(self):
-        """Test that state variable has proper defaults."""
-        var = StateVariable(
-            name="token",
-            type="address",
-            type_category=StateVariableType.ADDRESS,
-        )
-        assert var.initial_value is None
-        assert var.storage_slot is None
-        assert var.is_indexed is False
-
-    def test_state_variable_mapping_type(self):
-        """Test mapping type categorization."""
-        var = StateVariable(
-            name="balances",
-            type="mapping(address => uint256)",
-            type_category=StateVariableType.MAPPING,
-        )
-        assert var.type_category == StateVariableType.MAPPING
+# ---------------------------------------------------------------------------
+# Parameter
+# ---------------------------------------------------------------------------
 
 
 class TestParameter:
-    """Tests for Parameter model."""
+    def test_basic_construction_via_alias(self):
+        p = Parameter(**{"name": "amount", "type": "uint256"})
+        assert p.name == "amount"
+        assert p.type_ == "uint256"
 
-    def test_create_parameter(self):
-        """Test creating a function parameter."""
-        param = Parameter(name="recipient", type="address")
-        assert param.name == "recipient"
-        assert param.type_ == "address"
-        assert param.indexed is False
+    def test_alias_serialization(self):
+        p = Parameter(**{"name": "to", "type": "address"})
+        d = p.model_dump(by_alias=True)
+        assert d["type"] == "address"
+        assert "type_" not in d
 
-    def test_parameter_indexed(self):
-        """Test indexed parameter for events."""
-        param = Parameter(name="from", type="address", indexed=True)
-        assert param.indexed is True
+    def test_indexed_default_false(self):
+        p = Parameter(**{"name": "x", "type": "bool"})
+        assert p.indexed is False
 
 
-class TestFunctionSignature:
-    """Tests for FunctionSignature model."""
+# ---------------------------------------------------------------------------
+# StateVariable
+# ---------------------------------------------------------------------------
 
-    def test_create_signature_no_params(self):
-        """Test creating function signature with no parameters."""
-        sig = FunctionSignature(name="initialize")
-        assert sig.name == "initialize"
-        assert len(sig.parameters) == 0
-        assert len(sig.returns) == 0
 
-    def test_create_signature_with_params(self):
-        """Test creating signature with parameters and returns."""
-        params = [Parameter(name="amount", type="uint256")]
-        returns = [Parameter(name="success", type="bool")]
-        sig = FunctionSignature(
-            name="transfer",
-            parameters=params,
-            returns=returns,
+class TestStateVariable:
+    def test_full_construction(self):
+        sv = StateVariable(
+            **{
+                "type": "uint256",
+                "name": "totalSupply",
+                "visibility": Visibility.PUBLIC,
+                "type_category": StateVariableType.PRIMITIVE,
+            }
         )
-        assert len(sig.parameters) == 1
-        assert len(sig.returns) == 1
+        assert sv.name == "totalSupply"
+        assert sv.type_ == "uint256"
+        assert sv.visibility == Visibility.PUBLIC
+        assert sv.is_constant is False
+        assert sv.line_start == 0
 
-
-class TestAccessControl:
-    """Tests for AccessControl model."""
-
-    def test_access_control_with_modifiers(self):
-        """Test access control with modifiers."""
-        ac = AccessControl(
-            modifiers=["onlyOwner", "nonReentrant"],
-            onlyOwner=True,
+    def test_with_storage_slot(self):
+        storage = StorageSlotInfo(slot=2, byte_offset=0, size_bytes=32, is_packed=False)
+        sv = StateVariable(
+            **{
+                "type": "address",
+                "name": "owner",
+                "visibility": Visibility.PUBLIC,
+                "type_category": StateVariableType.ADDRESS,
+                "storage": storage,
+            }
         )
-        assert "onlyOwner" in ac.modifiers
-        assert ac.onlyOwner is True
+        assert sv.storage is not None
+        assert sv.storage.slot == 2
 
-    def test_access_control_empty(self):
-        """Test empty access control."""
-        ac = AccessControl()
-        assert len(ac.modifiers) == 0
-        assert ac.onlyOwner is False
+    def test_python_attribute_access(self):
+        """type_ (Python name) must be accessible; var.type should NOT be used."""
+        sv = StateVariable(
+            **{"type": "mapping(address => uint256)", "name": "balances",
+               "visibility": Visibility.INTERNAL, "type_category": StateVariableType.MAPPING}
+        )
+        assert sv.type_ == "mapping(address => uint256)"
+
+    def test_id_auto_generated(self):
+        sv1 = StateVariable(
+            **{"type": "bool", "name": "paused",
+               "visibility": Visibility.PRIVATE, "type_category": StateVariableType.PRIMITIVE}
+        )
+        sv2 = StateVariable(
+            **{"type": "bool", "name": "paused",
+               "visibility": Visibility.PRIVATE, "type_category": StateVariableType.PRIMITIVE}
+        )
+        assert sv1.id != sv2.id
+
+
+# ---------------------------------------------------------------------------
+# Function
+# ---------------------------------------------------------------------------
 
 
 class TestFunction:
-    """Tests for Function model."""
-
-    def test_create_function(self):
-        """Test creating a function model."""
-        sig = FunctionSignature(name="transfer")
-        func = Function(
+    def _make_function(self, **kwargs) -> Function:
+        defaults = dict(
             name="transfer",
-            contract_id="contract1",
+            contract_id="contract-uuid-001",
             visibility=Visibility.EXTERNAL,
-            signature=sig,
+            signature=FunctionSignature(name="transfer"),
             line_start=10,
             line_end=20,
         )
-        assert func.name == "transfer"
-        assert func.visibility == Visibility.EXTERNAL
-        assert func.is_payable is False
+        defaults.update(kwargs)
+        return Function(**defaults)
+
+    def test_basic_function(self):
+        f = self._make_function()
+        assert f.name == "transfer"
+        assert f.visibility == Visibility.EXTERNAL
+        assert f.is_payable is False
+        assert f.is_pure is False
+        assert f.is_view is False
 
     def test_payable_function(self):
-        """Test identifying payable function."""
-        sig = FunctionSignature(name="deposit")
-        func = Function(
-            name="deposit",
-            contract_id="contract1",
-            visibility=Visibility.PUBLIC,
-            signature=sig,
-            is_payable=True,
-            line_start=1,
-            line_end=5,
-        )
-        assert func.is_payable is True
+        f = self._make_function(name="deposit", is_payable=True)
+        assert f.is_payable is True
 
-    def test_function_state_var_access(self):
-        """Test tracking state variable access."""
-        sig = FunctionSignature(name="updateBalance")
-        func = Function(
-            name="updateBalance",
-            contract_id="contract1",
-            visibility=Visibility.INTERNAL,
-            signature=sig,
-            state_vars_read=["balance"],
-            state_vars_written=["balance"],
-            line_start=1,
-            line_end=3,
+    def test_view_function(self):
+        f = self._make_function(name="balanceOf", is_view=True, visibility=Visibility.PUBLIC)
+        assert f.is_view is True
+
+    def test_constructor_flags(self):
+        f = self._make_function(name="constructor", is_constructor=True)
+        assert f.is_constructor is True
+
+    def test_access_control(self):
+        ac = AccessControl(modifiers=["onlyOwner"], onlyOwner=True)
+        f = self._make_function(access_control=ac)
+        assert f.access_control.only_owner is True
+        assert "onlyOwner" in f.access_control.modifiers
+
+    def test_state_var_tracking(self):
+        f = self._make_function(
+            state_vars_read=["totalSupply", "balances"],
+            state_vars_written=["balances"],
         )
-        assert "balance" in func.state_vars_read
-        assert "balance" in func.state_vars_written
+        assert "totalSupply" in f.state_vars_read
+        assert "balances" in f.state_vars_written
+
+    def test_selector_field(self):
+        sig = FunctionSignature(name="transfer", selector="0xa9059cbb")
+        f = self._make_function(signature=sig)
+        assert f.signature.selector == "0xa9059cbb"
+
+
+# ---------------------------------------------------------------------------
+# FunctionCall
+# ---------------------------------------------------------------------------
 
 
 class TestFunctionCall:
-    """Tests for FunctionCall model."""
-
     def test_internal_call(self):
-        """Test internal function call."""
-        call = FunctionCall(
-            caller_id="func1",
-            callee_id="func2",
-            callee_name="helper",
+        fc = FunctionCall(
+            caller_id="fn-a",
+            callee_id="fn-b",
+            callee_name="_transfer",
             call_type=CallType.INTERNAL,
-            line_number=15,
+            line_number=42,
         )
-        assert call.call_type == CallType.INTERNAL
-        assert call.callee_id == "func2"
+        assert fc.call_type == CallType.INTERNAL
+        assert fc.is_delegatecall is False
 
     def test_external_call(self):
-        """Test external function call."""
-        call = FunctionCall(
-            caller_id="func1",
+        fc = FunctionCall(
+            caller_id="fn-a",
             callee_name="transfer",
-            callee_contract="IERC20",
             call_type=CallType.EXTERNAL,
-            line_number=20,
+            line_number=55,
         )
-        assert call.call_type == CallType.EXTERNAL
-        assert call.callee_contract == "IERC20"
+        assert fc.callee_id is None
 
     def test_delegatecall(self):
-        """Test delegatecall detection."""
-        call = FunctionCall(
-            caller_id="proxy",
-            callee_name="implementation",
+        fc = FunctionCall(
+            caller_id="fn-a",
+            callee_name="",
             call_type=CallType.DELEGATECALL,
             is_delegatecall=True,
-            line_number=30,
+            line_number=0,
         )
-        assert call.is_delegatecall is True
+        assert fc.is_delegatecall is True
+        assert fc.call_type == CallType.DELEGATECALL
+
+
+# ---------------------------------------------------------------------------
+# Contract
+# ---------------------------------------------------------------------------
 
 
 class TestContract:
-    """Tests for Contract model."""
-
-    def test_create_contract(self):
-        """Test creating contract model."""
-        contract = Contract(
-            name="Token",
-            file_path="/path/to/Token.sol",
-        )
-        assert contract.name == "Token"
-        assert contract.is_library is False
+    def test_basic_contract(self):
+        c = Contract(name="MyToken", file_path="/tmp/MyToken.sol")
+        assert c.name == "MyToken"
+        assert c.language == ContractLanguage.SOLIDITY
+        assert c.is_library is False
+        assert c.proxy_type == ProxyType.NONE
 
     def test_library_contract(self):
-        """Test identifying library contract."""
-        contract = Contract(
-            name="SafeMath",
-            file_path="/path/to/SafeMath.sol",
-            is_library=True,
-        )
-        assert contract.is_library is True
+        c = Contract(name="SafeMath", file_path="/tmp/SafeMath.sol", is_library=True)
+        assert c.is_library is True
 
-    def test_contract_inheritance(self):
-        """Test contract inheritance tracking."""
-        contract = Contract(
-            name="ERC20Extended",
-            file_path="/path/to/ERC20Extended.sol",
-            parent_contracts=["ERC20"],
+    def test_inheritance(self):
+        c = Contract(
+            name="ERC20",
+            file_path="/tmp/ERC20.sol",
+            parent_contracts=["IERC20", "Context"],
+            full_inheritance=["IERC20", "Context"],
         )
-        assert "ERC20" in contract.parent_contracts
+        assert "IERC20" in c.parent_contracts
+        assert len(c.full_inheritance) == 2
+
+    def test_proxy_type(self):
+        c = Contract(
+            name="MyProxy",
+            file_path="/tmp/Proxy.sol",
+            proxy_type=ProxyType.UUPS,
+        )
+        assert c.proxy_type == ProxyType.UUPS
+
+
+# ---------------------------------------------------------------------------
+# Event
+# ---------------------------------------------------------------------------
+
+
+class TestEvent:
+    def test_event_with_indexed_params(self):
+        params = [
+            Parameter(**{"name": "from", "type": "address", "indexed": True}),
+            Parameter(**{"name": "to", "type": "address", "indexed": True}),
+            Parameter(**{"name": "amount", "type": "uint256", "indexed": False}),
+        ]
+        ev = Event(name="Transfer", contract_id="contract-1", parameters=params)
+        assert ev.name == "Transfer"
+        assert ev.parameters[0].indexed is True
+        assert ev.parameters[2].indexed is False
+
+
+# ---------------------------------------------------------------------------
+# AssetFlow
+# ---------------------------------------------------------------------------
+
+
+class TestAssetFlow:
+    def test_eth_flow(self):
+        af = AssetFlow(
+            from_function_id="fn-deposit",
+            to_function_id="fn-internal",
+            asset_type="ETH",
+            line_number=100,
+        )
+        assert af.asset_type == "ETH"
+        assert af.is_conditional is False
+
+    def test_erc20_flow(self):
+        af = AssetFlow(
+            from_function_id="fn-caller",
+            to_function_id=None,
+            asset_type="ERC20",
+            line_number=50,
+        )
+        assert af.to_function_id is None
+
+
+# ---------------------------------------------------------------------------
+# ExternalDependency
+# ---------------------------------------------------------------------------
+
+
+class TestExternalDependency:
+    def test_known_interface(self):
+        dep = ExternalDependency(name="IERC20", interface="ERC20")
+        assert dep.interface == "ERC20"
+        assert dep.references == []
+
+
+# ---------------------------------------------------------------------------
+# ProxyRelationship
+# ---------------------------------------------------------------------------
+
+
+class TestProxyRelationship:
+    def test_uups_proxy(self):
+        pr = ProxyRelationship(
+            proxy_contract_id="proxy-id",
+            implementation_contract_id="impl-id",
+            proxy_type=ProxyType.UUPS,
+            is_upgradeable=True,
+            upgrade_function="upgradeTo",
+        )
+        assert pr.proxy_type == ProxyType.UUPS
+        assert pr.is_upgradeable is True
+
+    def test_no_implementation(self):
+        pr = ProxyRelationship(
+            proxy_contract_id="proxy-id",
+            proxy_type=ProxyType.CUSTOM,
+            is_upgradeable=False,
+        )
+        assert pr.implementation_contract_id is None
+
+
+# ---------------------------------------------------------------------------
+# VersionDiff
+# ---------------------------------------------------------------------------
+
+
+class TestVersionDiff:
+    def test_empty_diff(self):
+        vd = VersionDiff()
+        assert vd.added_contracts == []
+        assert vd.attack_surface_delta == "unknown"
+
+    def test_with_changes(self):
+        vd = VersionDiff(
+            added_functions=["LendingVault.setFee"],
+            new_external_deps=["IFeeOracle"],
+            attack_surface_delta="medium",
+        )
+        assert len(vd.added_functions) == 1
+        assert vd.attack_surface_delta == "medium"
+
+
+# ---------------------------------------------------------------------------
+# ProtocolGraph
+# ---------------------------------------------------------------------------
+
+
+class TestProtocolGraph:
+    def test_empty_graph(self):
+        g = ProtocolGraph()
+        assert g.contracts == []
+        assert g.functions == []
+        assert g.state_variables == []
+        assert g.events == []
+        assert g.asset_flows == []
+        assert g.external_dependencies == []
+        assert g.proxy_relationships == []
+        assert g.source_available is True
+
+    def test_json_serialization(self):
+        c = Contract(name="Token", file_path="Token.sol")
+        g = ProtocolGraph(contracts=[c])
+        data = g.model_dump(by_alias=True)
+        assert isinstance(data["contracts"], list)
+        assert data["contracts"][0]["name"] == "Token"
+        # language should serialize as string value, not enum object
+        assert data["contracts"][0]["language"] == "solidity"

@@ -1,157 +1,205 @@
 """
-Unit tests for the parser module.
+Unit tests for zeropath.parser
+
+Tests cover the pure utility functions and type-categorization helpers
+without requiring a live Slither / solc installation. Live parsing is
+covered by test_integration.py.
 """
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from zeropath.exceptions import ParsingError
-from zeropath.parser import ContractParser
-from zeropath.models import Visibility, StateVariableType
+from zeropath.models import ContractLanguage, StateVariableType, Visibility
+from zeropath.parser import (
+    ContractParser,
+    _categorize_type,
+    _extract_external_func_name,
+    _guess_interface,
+    _parse_visibility,
+    detect_language,
+    extract_compiler_version,
+)
 
 
-@pytest.fixture
-def parser():
-    """Provide a ContractParser instance."""
-    return ContractParser()
+# ---------------------------------------------------------------------------
+# detect_language
+# ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def mock_contract():
-    """Create a mock Slither contract object."""
-    mock = MagicMock()
-    mock.name = "TestContract"
-    mock.is_library = False
-    mock.is_abstract = False
-    mock.inheritance = []
-    mock.state_variables = []
-    mock.functions = []
-    return mock
+class TestDetectLanguage:
+    def test_sol_extension(self, tmp_path: Path):
+        f = tmp_path / "Token.sol"
+        f.write_text("pragma solidity ^0.8.0;")
+        assert detect_language(f) == ContractLanguage.SOLIDITY
+
+    def test_vy_extension(self, tmp_path: Path):
+        f = tmp_path / "Token.vy"
+        f.write_text("# @version 0.3.10")
+        assert detect_language(f) == ContractLanguage.VYPER
+
+    def test_pragma_solidity_detection(self, tmp_path: Path):
+        f = tmp_path / "Token.txt"
+        f.write_text("pragma solidity ^0.8.0;")
+        assert detect_language(f) == ContractLanguage.SOLIDITY
+
+    def test_vyper_version_comment(self, tmp_path: Path):
+        f = tmp_path / "Token.txt"
+        f.write_text("# @version 0.3.10\n@external\ndef foo(): pass")
+        assert detect_language(f) == ContractLanguage.VYPER
+
+    def test_unknown_extension(self, tmp_path: Path):
+        f = tmp_path / "Mystery.xyz"
+        f.write_text("nothing recognisable")
+        assert detect_language(f) == ContractLanguage.UNKNOWN
 
 
-class TestContractParser:
-    """Tests for ContractParser."""
+# ---------------------------------------------------------------------------
+# extract_compiler_version
+# ---------------------------------------------------------------------------
 
-    def test_parser_initialization(self, parser):
-        """Test parser initializes correctly."""
-        assert parser is not None
+
+class TestExtractCompilerVersion:
+    def test_solidity_caret_version(self, tmp_path: Path):
+        f = tmp_path / "Token.sol"
+        f.write_text("// SPDX-License-Identifier: MIT\npragma solidity ^0.8.20;")
+        assert extract_compiler_version(f) == "^0.8.20"
+
+    def test_solidity_range_version(self, tmp_path: Path):
+        f = tmp_path / "Token.sol"
+        f.write_text("pragma solidity >=0.8.0 <0.9.0;")
+        assert extract_compiler_version(f) == ">=0.8.0 <0.9.0"
+
+    def test_vyper_version(self, tmp_path: Path):
+        f = tmp_path / "Token.vy"
+        f.write_text("# @version 0.3.10\n")
+        assert extract_compiler_version(f) == "0.3.10"
+
+    def test_no_pragma(self, tmp_path: Path):
+        f = tmp_path / "Foo.sol"
+        f.write_text("contract Foo {}")
+        assert extract_compiler_version(f) is None
+
+
+# ---------------------------------------------------------------------------
+# _parse_visibility
+# ---------------------------------------------------------------------------
+
+
+class TestParseVisibility:
+    @pytest.mark.parametrize(
+        "raw, expected",
+        [
+            ("public", Visibility.PUBLIC),
+            ("Public", Visibility.PUBLIC),
+            ("external", Visibility.EXTERNAL),
+            ("private", Visibility.PRIVATE),
+            ("internal", Visibility.INTERNAL),
+            ("default", Visibility.INTERNAL),
+            ("", Visibility.INTERNAL),
+        ],
+    )
+    def test_mapping(self, raw: str, expected: Visibility):
+        assert _parse_visibility(raw) == expected
+
+
+# ---------------------------------------------------------------------------
+# _categorize_type
+# ---------------------------------------------------------------------------
+
+
+class TestCategorizeType:
+    @pytest.mark.parametrize(
+        "type_str, expected",
+        [
+            ("uint256", StateVariableType.PRIMITIVE),
+            ("int128", StateVariableType.PRIMITIVE),
+            ("bool", StateVariableType.PRIMITIVE),
+            ("address", StateVariableType.ADDRESS),
+            ("address payable", StateVariableType.ADDRESS),
+            ("mapping(address => uint256)", StateVariableType.MAPPING),
+            ("uint256[]", StateVariableType.ARRAY),
+            ("uint256[10]", StateVariableType.ARRAY),
+            ("bytes32", StateVariableType.BYTES),
+            ("bytes", StateVariableType.BYTES),
+            ("string", StateVariableType.STRING),
+            ("struct Position", StateVariableType.STRUCT),
+            ("enum Status", StateVariableType.ENUM),
+        ],
+    )
+    def test_categorization(self, type_str: str, expected: StateVariableType):
+        assert _categorize_type(type_str) == expected
+
+
+# ---------------------------------------------------------------------------
+# _extract_external_func_name
+# ---------------------------------------------------------------------------
+
+
+class TestExtractExternalFuncName:
+    def test_member_name_attribute(self):
+        # Use a plain object to avoid MagicMock's built-in .called bool property
+        class _Called:
+            member_name = "transfer"
+
+        class _Call:
+            called = _Called()
+
+        assert _extract_external_func_name(_Call()) == "transfer"
+
+    def test_fallback_string_parse(self):
+        # Object without .called → falls through to string-parsing heuristic
+        class _Call:
+            def __str__(self) -> str:
+                return "token.transfer(to, amount)"
+
+        result = _extract_external_func_name(_Call())
+        assert result == "transfer"
+
+    def test_returns_none_on_no_match(self):
+        class _Call:
+            def __str__(self) -> str:
+                return "nofunction"
+
+        result = _extract_external_func_name(_Call())
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# _guess_interface
+# ---------------------------------------------------------------------------
+
+
+class TestGuessInterface:
+    def test_known_interfaces(self):
+        assert _guess_interface("IERC20") == "ERC20"
+        assert _guess_interface("IERC721") == "ERC721"
+        assert _guess_interface("AggregatorV3Interface") == "Chainlink"
+        assert _guess_interface("ILendingPool") == "Aave"
+
+    def test_unknown_returns_none(self):
+        assert _guess_interface("MyCustomContract") is None
+
+
+# ---------------------------------------------------------------------------
+# ContractParser initialisation
+# ---------------------------------------------------------------------------
+
+
+class TestContractParserInit:
+    def test_defaults(self):
+        parser = ContractParser()
         assert parser.solc_version is None
+        assert parser.extract_storage is True
+        assert parser.detect_proxies is True
 
-    def test_parser_with_solc_version(self):
-        """Test parser with specific Solidity version."""
-        parser = ContractParser(solc_version="0.8.0")
-        assert parser.solc_version == "0.8.0"
+    def test_custom_solc(self):
+        parser = ContractParser(solc_version="0.8.19")
+        assert parser.solc_version == "0.8.19"
 
-    def test_parse_nonexistent_file(self, parser):
-        """Test parsing nonexistent file raises error."""
-        with pytest.raises(ParsingError):
-            parser.parse_contract(Path("/nonexistent/path.sol"))
-
-    def test_categorize_primitive_type(self, parser):
-        """Test categorization of primitive types."""
-        mock_var = MagicMock()
-        mock_var.type = "uint256"
-
-        category = parser._categorize_variable_type(mock_var)
-        assert category == StateVariableType.PRIMITIVE
-
-    def test_categorize_address_type(self, parser):
-        """Test categorization of address type."""
-        mock_var = MagicMock()
-        mock_var.type = "address"
-
-        category = parser._categorize_variable_type(mock_var)
-        assert category == StateVariableType.ADDRESS
-
-    def test_categorize_mapping_type(self, parser):
-        """Test categorization of mapping type."""
-        mock_var = MagicMock()
-        mock_var.type = "mapping(address => uint256)"
-
-        category = parser._categorize_variable_type(mock_var)
-        assert category == StateVariableType.MAPPING
-
-    def test_categorize_array_type(self, parser):
-        """Test categorization of array type."""
-        mock_var = MagicMock()
-        mock_var.type = "uint256[]"
-
-        category = parser._categorize_variable_type(mock_var)
-        assert category == StateVariableType.ARRAY
-
-    def test_parse_contract_metadata(self, parser, mock_contract):
-        """Test parsing contract metadata."""
-        contract_path = Path("/test/Contract.sol")
-
-        metadata = parser._parse_contract_metadata(mock_contract, contract_path)
-
-        assert metadata.name == "TestContract"
-        assert metadata.file_path == str(contract_path)
-        assert metadata.is_library is False
-
-    def test_parse_state_variables_empty(self, parser, mock_contract):
-        """Test parsing contract with no state variables."""
-        contract_id = "contract1"
-
-        variables = parser._parse_state_variables(mock_contract, contract_id)
-
-        assert len(variables) == 0
-
-    def test_parse_functions_empty(self, parser, mock_contract):
-        """Test parsing contract with no functions."""
-        contract_id = "contract1"
-
-        functions = parser._parse_functions(mock_contract, contract_id)
-
-        assert len(functions) == 0
-
-    def test_extract_function_calls_empty(self, parser, mock_contract):
-        """Test extracting calls from contract with no calls."""
-        contract_id = "contract1"
-
-        calls = parser._extract_function_calls(mock_contract, [], contract_id)
-
-        assert len(calls) == 0
-
-
-class TestStateVariableParsing:
-    """Tests for state variable parsing."""
-
-    def test_parse_public_state_variable(self, parser):
-        """Test parsing a public state variable."""
-        mock_var = MagicMock()
-        mock_var.name = "totalSupply"
-        mock_var.visibility = "public"
-        mock_var.type = "uint256"
-        mock_var.is_constant = False
-        mock_var.is_immutable = False
-        mock_var.source_mapping = {"start_line": 10}
-
-        mock_contract = MagicMock()
-        mock_contract.state_variables = [mock_var]
-
-        # This would normally require Slither mocking
-        # Simplified test of the categorization logic
-        category = parser._categorize_variable_type(mock_var)
-        assert category == StateVariableType.PRIMITIVE
-
-
-class TestFunctionParsing:
-    """Tests for function parsing."""
-
-    def test_function_visibility_parsing(self, parser):
-        """Test parsing function visibility levels."""
-        # This tests the visibility mapping in parse_functions
-        visibilities = {
-            "public": Visibility.PUBLIC,
-            "external": Visibility.EXTERNAL,
-            "private": Visibility.PRIVATE,
-            "internal": Visibility.INTERNAL,
-        }
-
-        for vis_str, expected_vis in visibilities.items():
-            # Simplified test of visibility logic
-            if vis_str == "public":
-                assert expected_vis == Visibility.PUBLIC
+    def test_nonexistent_file_raises(self):
+        parser = ContractParser()
+        with pytest.raises(ParsingError, match="not found"):
+            parser.parse_contract(Path("/does/not/exist.sol"))

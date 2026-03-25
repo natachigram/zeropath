@@ -1,43 +1,54 @@
 """
-Custom exceptions for the zeropath application.
+Custom exception hierarchy for ZeroPath.
+
+Every domain failure has a specific, catchable type so callers can
+respond appropriately rather than catching bare Exception.
 """
 
 
 class ZeropathError(Exception):
-    """Base exception for all zeropath errors."""
-    pass
+    """Base exception for all ZeroPath errors."""
 
 
 class ParsingError(ZeropathError):
-    """Raised when contract parsing fails."""
-    pass
+    """Contract source parsing failed (syntax error, bad pragma, etc.)."""
 
 
 class ASTExtractionError(ZeropathError):
-    """Raised when AST extraction fails."""
-    pass
+    """AST extraction from Slither output failed."""
 
 
 class GraphConstructionError(ZeropathError):
-    """Raised when protocol graph construction fails."""
-    pass
+    """Protocol graph assembly failed."""
 
 
 class StorageExtractionError(ZeropathError):
-    """Raised when storage layout extraction fails."""
-    pass
+    """Storage layout extraction failed."""
 
 
 class AssetFlowTrackingError(ZeropathError):
-    """Raised when asset flow tracking fails."""
-    pass
+    """Asset flow analysis failed."""
+
+
+class ProxyDetectionError(ZeropathError):
+    """Proxy pattern detection failed."""
 
 
 class GraphDatabaseError(ZeropathError):
-    """Raised when graph database operations fail."""
-    pass
+    """Neo4j operation failed (connection, query, write)."""
 
 
 class ConfigurationError(ZeropathError):
-    """Raised when configuration is invalid."""
-    pass
+    """Invalid or missing configuration."""
+
+
+class VersionDiffError(ZeropathError):
+    """Version diff computation failed."""
+
+
+class BytecodeDecompilationError(ZeropathError):
+    """Bytecode decompilation via Heimdall failed or returned unusable output."""
+
+
+class GitHubIngestionError(ZeropathError):
+    """GitHub repository cloning or file fetching failed."""

@@ -4,33 +4,39 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zeropath"
-version = "0.1.0"
-description = "Production-grade Solidity smart contract analyzer - builds protocol graphs for security research"
+version = "0.2.0"
+description = "Autonomous smart contract security research system — Phase 1: Protocol Ingestion + Graph Builder"
 readme = "README.md"
 requires-python = ">=3.11"
-authors = [{ name = "Security Research Team" }]
+authors = [{ name = "ZeroPath Security Research" }]
 
 dependencies = [
-    "slither-analyzer==0.10.1",
-    "neo4j==5.15.0",
+    # Core analysis
+    "slither-analyzer>=0.10.1",
+    # Data modelling
     "pydantic>=2.6.0",
     "pydantic-settings>=2.2.0",
-    "click==8.1.7",
-    "rich==13.7.0",
-    "structlog==24.1.0",
+    # Graph database
+    "neo4j>=5.15.0",
+    # CLI
+    "click>=8.1.7",
+    "rich>=13.7.0",
+    # Logging
+    "structlog>=24.1.0",
+    # Type helpers
     "typing-extensions>=4.8.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest==7.4.3",
-    "pytest-cov==4.1.0",
-    "pytest-asyncio==0.21.1",
-    "black==23.12.0",
-    "isort==5.13.2",
-    "mypy==1.7.1",
-    "ruff==0.1.8",
-    "pre-commit==3.5.0",
+    "pytest>=7.4.3",
+    "pytest-cov>=4.1.0",
+    "pytest-asyncio>=0.23.0",
+    "black>=23.12.0",
+    "isort>=5.13.2",
+    "mypy>=1.7.1",
+    "ruff>=0.1.8",
+    "pre-commit>=3.5.0",
 ]
 
 [project.scripts]
@@ -45,26 +51,75 @@ where = ["src"]
 [tool.setuptools.package-data]
 zeropath = ["py.typed"]
 
+# ---------------------------------------------------------------------------
+# Formatter
+# ---------------------------------------------------------------------------
+
 [tool.black]
 line-length = 100
-target-version = ["py311"]
+target-version = ["py311", "py312"]
 
 [tool.isort]
 profile = "black"
 line_length = 100
-multi_line_mode = 3
+
+# ---------------------------------------------------------------------------
+# Linter (ruff replaces flake8 + pylint + many others)
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by black)
+    "B008",  # function call in default argument
+    "F811",  # redefinition (Pydantic alias pattern in models.py)
+]
+
+# ---------------------------------------------------------------------------
+# Type checker
+# ---------------------------------------------------------------------------
 
 [tool.mypy]
 python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
-disallow_untyped_defs = false
-disallow_untyped_calls = false
+ignore_missing_imports = true   # slither stubs are incomplete
+
+# ---------------------------------------------------------------------------
+# Test runner
+# ---------------------------------------------------------------------------
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "--cov=src/zeropath --cov-report=term"
+asyncio_mode = "auto"
+addopts = [
+    "--cov=src/zeropath",
+    "--cov-report=term-missing",
+    "--cov-report=html:htmlcov",
+    "-v",
+]
 
 [tool.coverage.run]
 source = ["src/zeropath"]
+omit = ["*/tests/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@overload",
+]
