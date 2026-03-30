@@ -352,6 +352,9 @@ class ProtocolGraphBuilder:
                     if key not in ir_keys:
                         graph.asset_flows.append(flow)
 
+            # Propagate source_available: False if ANY file was bytecode-only
+            graph.source_available = all(pr.source_available for pr in parse_results)
+
             graph.analysis_metadata = {
                 "num_contracts": len(graph.contracts),
                 "num_functions": len(graph.functions),
@@ -369,6 +372,13 @@ class ProtocolGraphBuilder:
                 "languages": list(
                     {c.language.value for c in graph.contracts}
                 ),
+                "source_available": graph.source_available,
+                "bytecode_only_contracts": [
+                    c.name
+                    for pr in parse_results
+                    if not pr.source_available
+                    for c in pr.contracts
+                ],
             }
 
             logger.info(

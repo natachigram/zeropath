@@ -117,6 +117,7 @@ class ParseResult:
         "proxy_relationships",
         "function_id_map",
         "slither_contracts",
+        "source_available",
     )
 
     def __init__(self) -> None:
@@ -131,6 +132,8 @@ class ParseResult:
         self.function_id_map: dict[str, str] = {}
         # Raw Slither contract objects (needed for IR flow analysis)
         self.slither_contracts: list[Any] = []
+        # False when contract was parsed from bytecode (no source available)
+        self.source_available: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -167,8 +170,12 @@ class ContractParser:
         """
         Parse a contract file and return all extracted data.
 
+        Accepts:
+          - .sol / .vy files  → Slither-based full analysis
+          - .bin files        → bytecode decompilation fallback
+
         Args:
-            contract_path: Absolute path to a .sol or .vy file.
+            contract_path: Absolute path to a contract source or bytecode file.
 
         Returns:
             ParseResult populated with all extracted entities.
@@ -178,6 +185,10 @@ class ContractParser:
         """
         if not contract_path.exists():
             raise ParsingError(f"Contract file not found: {contract_path}")
+
+        # Route .bin (raw bytecode) files through the decompilation path
+        if contract_path.suffix == ".bin":
+            return self._parse_bytecode_file(contract_path)
 
         language = detect_language(contract_path)
         logger.info(
@@ -598,6 +609,90 @@ class ContractParser:
                         )
 
         return list(deps.values())
+
+    # ------------------------------------------------------------------
+    # Bytecode path
+    # ------------------------------------------------------------------
+
+    def _parse_bytecode_file(self, contract_path: Path) -> ParseResult:
+        """
+        Parse a .bin file (raw EVM bytecode) via HeimdallDecompiler.
+
+        The returned ParseResult has source_available=False and contains
+        degraded models (stub functions named func_<selector>).
+        """
+        bytecode_hex = contract_path.read_text(encoding="utf-8").strip()
+        contract_name = contract_path.stem
+
+        logger.info(
+            "parsing_bytecode_file",
+            path=str(contract_path),
+            contract=contract_name,
+            bytecode_len=len(bytecode_hex),
+        )
+
+        return self.parse_bytecode(bytecode_hex, contract_name=contract_name)
+
+    def parse_bytecode(
+        self,
+        bytecode_hex: str,
+        contract_name: str = "Unknown",
+    ) -> ParseResult:
+        """
+        Decompile raw EVM bytecode and return a degraded ParseResult.
+
+        Uses Heimdall-rs when available; falls back to selector extraction.
+
+        Args:
+            bytecode_hex:  EVM bytecode as a hex string (0x-prefixed or bare).
+            contract_name: Human-readable name to assign to the recovered contract.
+
+        Returns:
+            ParseResult with source_available=False and is_degraded stubs.
+        """
+        from zeropath.bytecode_decompiler import HeimdallDecompiler
+        from zeropath.config import get_settings
+
+        settings = get_settings()
+        decompiler = HeimdallDecompiler(
+            heimdall_bin=settings.heimdall_bin,
+            timeout=settings.heimdall_timeout_seconds,
+        )
+
+        try:
+            decompile_result = decompiler.decompile(
+                bytecode_hex, contract_name=contract_name
+            )
+        except Exception as exc:
+            logger.error(
+                "bytecode_decompilation_failed",
+                contract=contract_name,
+                error=str(exc),
+            )
+            raise ParsingError(
+                f"Bytecode decompilation failed for '{contract_name}': {exc}"
+            ) from exc
+
+        result = ParseResult()
+        result.source_available = False
+        result.contracts.extend(decompile_result.contracts)
+        result.functions.extend(decompile_result.functions)
+        result.events.extend(decompile_result.events)
+
+        # Build function_id_map for downstream asset-flow analysis
+        for contract in decompile_result.contracts:
+            for func in decompile_result.functions:
+                if func.contract_id == contract.id:
+                    result.function_id_map[f"{contract.name}.{func.name}"] = func.id
+
+        logger.info(
+            "bytecode_parsed",
+            contract=contract_name,
+            functions=len(result.functions),
+            events=len(result.events),
+            decompiler=decompile_result.decompiler,
+        )
+        return result
 
 
 # ---------------------------------------------------------------------------

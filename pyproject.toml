@@ -23,6 +23,8 @@ dependencies = [
     "rich>=13.7.0",
     # Logging
     "structlog>=24.1.0",
+    # HTTP (on-chain fetcher)
+    "requests>=2.31.0",
     # Type helpers
     "typing-extensions>=4.8.0",
 ]

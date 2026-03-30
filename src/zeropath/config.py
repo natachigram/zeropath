@@ -59,6 +59,11 @@ class Settings(BaseSettings):
     heimdall_bin: Optional[Path] = None  # Path to heimdall binary, None = disabled
     heimdall_timeout_seconds: int = 60
 
+    # --- On-chain source fetching ---
+    etherscan_api_key: Optional[str] = None   # Etherscan / block-explorer API key
+    default_chain: str = "mainnet"             # Default chain for address analysis
+    rpc_url: Optional[str] = None             # Custom JSON-RPC endpoint for eth_getCode
+
     # --- Logging ---
     log_level: str = "INFO"
     log_file: Optional[Path] = None

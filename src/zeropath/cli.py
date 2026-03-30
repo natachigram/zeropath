@@ -3,6 +3,7 @@ Command-line interface for ZeroPath.
 
 Commands:
   analyze       Analyze contracts from a local path or GitHub URL.
+  infer         Run Phase 2 invariant inference on a protocol graph.
   diff          Compare two versions of a protocol.
   import-graph  Load a saved JSON graph into Neo4j.
   query         Interactive Cypher query shell against Neo4j.
@@ -43,6 +44,9 @@ _GITHUB_URL_RE = re.compile(
     r"(?:/tree/(?P<branch>[^/]+)(?P<subpath>/.*)?)?"
 )
 
+# Matches 0x-prefixed 20-byte hex addresses (case-insensitive)
+_ETH_ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
+
 
 # ---------------------------------------------------------------------------
 # CLI group
@@ -79,6 +83,16 @@ def cli(ctx: click.Context, log_level: str, log_file: Optional[Path]) -> None:
 @click.option("--no-proxies", is_flag=True, help="Skip proxy detection.")
 @click.option("--solc", default=None, help="Pin solc version (e.g. 0.8.19).")
 @click.option("--workers", default=None, type=int, help="Parallel worker count.")
+@click.option(
+    "--chain",
+    default=None,
+    help="Chain name or ID for on-chain address resolution (e.g. mainnet, polygon, 42161).",
+)
+@click.option(
+    "--etherscan-key",
+    default=None,
+    help="Etherscan / block-explorer API key for source fetching.",
+)
 @click.option("--neo4j-uri", default=None, help="Neo4j URI.")
 @click.option("--neo4j-user", default=None, help="Neo4j username.")
 @click.option("--neo4j-password", default=None, help="Neo4j password.")
@@ -94,6 +108,8 @@ def analyze(
     no_proxies: bool,
     solc: Optional[str],
     workers: Optional[int],
+    chain: Optional[str],
+    etherscan_key: Optional[str],
     neo4j_uri: Optional[str],
     neo4j_user: Optional[str],
     neo4j_password: Optional[str],
@@ -108,13 +124,19 @@ def analyze(
       - A local directory containing contracts
       - A GitHub URL: https://github.com/owner/repo[/tree/branch[/path]]
       - GitHub shorthand: owner/repo
+      - A contract address: 0x1234...abcd  (fetches verified source on-chain)
     """
     settings: Settings = ctx.obj["settings"]
     tmp_dir: Optional[Path] = None
 
     try:
         # --- Resolve source to a local path ---
-        contract_path = _resolve_source(source, settings)
+        contract_path = _resolve_source(
+            source,
+            settings,
+            chain=chain or settings.default_chain,
+            etherscan_key=etherscan_key or settings.etherscan_api_key,
+        )
 
         builder = ProtocolGraphBuilder(
             solc_version=solc,
@@ -156,6 +178,132 @@ def analyze(
     finally:
         if tmp_dir and tmp_dir.exists():
             shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# infer command (Phase 2)
+# ---------------------------------------------------------------------------
+
+
+@cli.command()
+@click.argument("graph_file", type=Path)
+@click.option(
+    "--output", "-o",
+    type=Path,
+    default=Path("output/invariants.json"),
+    show_default=True,
+    help="Output JSON file for the invariant report.",
+)
+@click.option(
+    "--protocol-name", "-n",
+    default="unknown",
+    show_default=True,
+    help="Human-readable protocol name.",
+)
+@click.option(
+    "--min-severity",
+    default="low",
+    type=click.Choice(["critical", "high", "medium", "low", "info"], case_sensitive=False),
+    show_default=True,
+    help="Only display invariants at or above this severity.",
+)
+@click.pass_context
+def infer(
+    ctx: click.Context,
+    graph_file: Path,
+    output: Path,
+    protocol_name: str,
+    min_severity: str,
+) -> None:
+    """
+    Run Phase 2 invariant inference on a saved protocol graph.
+
+    GRAPH_FILE is a JSON file produced by the `analyze` command.
+
+    Example::
+
+        zeropath analyze ./contracts -o output/graph.json
+        zeropath infer output/graph.json -n "MyProtocol" -o output/invariants.json
+    """
+    from zeropath.invariants import InvariantInferenceEngine
+    from zeropath.invariants.models import InvariantSeverity
+
+    _SEVERITY_LEVELS = {
+        "critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4,
+    }
+    min_level = _SEVERITY_LEVELS[min_severity.lower()]
+
+    try:
+        with open(graph_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        graph = ProtocolGraph.model_validate(data)
+    except Exception as exc:
+        console.print(f"[red]✗ Failed to load graph:[/red] {exc}")
+        raise click.Exit(1)
+
+    with console.status("[bold green]Running invariant inference (Phase 2)…"):
+        engine = InvariantInferenceEngine()
+        report = engine.analyse(graph, protocol_name=protocol_name)
+
+    # Save JSON
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with open(output, "w", encoding="utf-8") as f:
+        json.dump(report.model_dump(by_alias=True), f, indent=2, default=str)
+    console.print(f"[green]✓[/green] Invariant report saved → {output}")
+
+    # Display summary
+    _display_invariant_summary(report, min_level, _SEVERITY_LEVELS)
+
+
+def _display_invariant_summary(report: "InvariantReport", min_level: int, levels: dict) -> None:
+    from rich.markup import escape
+    from zeropath.invariants.models import InvariantSeverity
+
+    _SEV_COLOR = {
+        InvariantSeverity.CRITICAL: "red bold",
+        InvariantSeverity.HIGH: "red",
+        InvariantSeverity.MEDIUM: "yellow",
+        InvariantSeverity.LOW: "blue",
+        InvariantSeverity.INFO: "dim",
+    }
+
+    visible = [
+        i for i in report.invariants
+        if levels.get(i.severity.value, 99) <= min_level
+    ]
+
+    summary_table = Table(title=f"Invariant Report — {report.protocol_name}", show_lines=True)
+    summary_table.add_column("Severity", style="bold", min_width=10)
+    summary_table.add_column("Type", style="cyan")
+    summary_table.add_column("Confidence", justify="right")
+    summary_table.add_column("Description")
+
+    for inv in visible:
+        color = _SEV_COLOR.get(inv.severity, "white")
+        summary_table.add_row(
+            Text(inv.severity.value.upper(), style=color),
+            inv.type.value,
+            f"{inv.confidence:.0%}",
+            escape(inv.description[:120]),
+        )
+
+    console.print(summary_table)
+
+    # Totals panel
+    by_sev = {}
+    for inv in report.invariants:
+        by_sev[inv.severity.value] = by_sev.get(inv.severity.value, 0) + 1
+
+    totals = " | ".join(
+        f"[{_SEV_COLOR.get(InvariantSeverity(k), 'white')}]{k.upper()}: {v}[/]"
+        for k, v in sorted(by_sev.items(), key=lambda x: levels.get(x[0], 99))
+    )
+    console.print(Panel(
+        f"Total invariants: [bold]{len(report.invariants)}[/bold]  |  {totals}\n"
+        f"Oracle dependencies: [bold]{len(report.oracle_dependencies)}[/bold]",
+        title="Summary",
+        expand=False,
+    ))
 
 
 # ---------------------------------------------------------------------------
@@ -349,17 +497,33 @@ def query(
 # ---------------------------------------------------------------------------
 
 
-def _resolve_source(source: str, settings: Settings) -> Path:
+def _resolve_source(
+    source: str,
+    settings: Settings,
+    chain: str = "mainnet",
+    etherscan_key: Optional[str] = None,
+) -> Path:
     """
-    Resolve SOURCE (local path or GitHub URL/shorthand) to a local Path.
+    Resolve SOURCE to a local Path.
 
-    For GitHub inputs, clones the repo into a temp directory and returns
-    the path to the contracts subdirectory (if specified in the URL).
+    Handles:
+      - Local file / directory paths
+      - GitHub URLs and owner/repo shorthands
+      - Ethereum contract addresses (0x-prefixed, 20 bytes)
     """
     # Already a local path?
     local = Path(source)
     if local.exists():
         return local.resolve()
+
+    # Ethereum contract address?
+    if _ETH_ADDRESS_RE.match(source):
+        return _fetch_onchain(
+            address=source,
+            chain=chain,
+            settings=settings,
+            etherscan_key=etherscan_key,
+        )
 
     # GitHub?
     m = _GITHUB_URL_RE.match(source)
@@ -373,7 +537,10 @@ def _resolve_source(source: str, settings: Settings) -> Path:
         )
 
     raise click.BadParameter(
-        f"'{source}' is neither a valid local path nor a recognised GitHub URL."
+        f"'{source}' is not a recognised input. Expected:\n"
+        "  - A local file or directory path\n"
+        "  - A GitHub URL or owner/repo shorthand\n"
+        "  - An Ethereum address: 0x1234...abcd"
     )
 
 
@@ -431,6 +598,45 @@ def _clone_github(
 
     console.print(f"[green]✓[/green] Cloned to {clone_root}")
     return contracts_dir
+
+
+def _fetch_onchain(
+    address: str,
+    chain: str,
+    settings: Settings,
+    etherscan_key: Optional[str],
+) -> Path:
+    """Fetch contract source (or bytecode) from on-chain APIs into a temp dir."""
+    from zeropath.onchain_fetcher import OnChainFetcher
+
+    console.print(
+        f"[bold]Fetching on-chain source[/bold] {address} on [cyan]{chain}[/cyan]…"
+    )
+
+    fetcher = OnChainFetcher(
+        etherscan_api_key=etherscan_key,
+        rpc_url=settings.rpc_url,
+    )
+
+    try:
+        on_chain_src = fetcher.fetch(address, chain)
+    except Exception as exc:
+        raise ZeropathError(f"On-chain fetch failed for {address}: {exc}") from exc
+
+    if on_chain_src.source_available:
+        console.print(
+            f"[green]✓[/green] Source found via [bold]{on_chain_src.fetch_tier}[/bold] "
+            f"({len(on_chain_src.source_files)} file(s)) — "
+            f"contract: [cyan]{on_chain_src.contract_name}[/cyan]"
+        )
+    else:
+        console.print(
+            "[yellow]⚠[/yellow] No verified source found — "
+            "falling back to bytecode decompilation."
+        )
+
+    local_dir = fetcher.write_sources_to_tempdir(on_chain_src)
+    return local_dir
 
 
 def _store_in_neo4j(

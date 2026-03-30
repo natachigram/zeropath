@@ -1,0 +1,1 @@
+# Invariant detectors sub-package

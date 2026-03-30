@@ -49,6 +49,8 @@ from zeropath.models import (
     VersionDiff,
     Visibility,
 )
+from zeropath.bytecode_decompiler import DecompileResult, HeimdallDecompiler
+from zeropath.onchain_fetcher import OnChainFetcher, OnChainSource
 from zeropath.parser import ContractParser
 
 __all__ = [
@@ -56,6 +58,10 @@ __all__ = [
     "__version__",
     # Core builder + DB
     "ContractParser",
+    "HeimdallDecompiler",
+    "DecompileResult",
+    "OnChainFetcher",
+    "OnChainSource",
     "ProtocolGraphBuilder",
     "ProtocolGraph",
     "Neo4jGraphDB",
