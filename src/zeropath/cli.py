@@ -4,6 +4,8 @@ Command-line interface for ZeroPath.
 Commands:
   analyze       Analyze contracts from a local path or GitHub URL.
   infer         Run Phase 2 invariant inference on a protocol graph.
+  attack        Run Phase 3 adversarial swarm on an invariant report.
+  sequence      Run Phase 4 transaction sequence + PoC generation.
   diff          Compare two versions of a protocol.
   import-graph  Load a saved JSON graph into Neo4j.
   query         Interactive Cypher query shell against Neo4j.
@@ -302,6 +304,315 @@ def _display_invariant_summary(report: "InvariantReport", min_level: int, levels
         f"Total invariants: [bold]{len(report.invariants)}[/bold]  |  {totals}\n"
         f"Oracle dependencies: [bold]{len(report.oracle_dependencies)}[/bold]",
         title="Summary",
+        expand=False,
+    ))
+
+
+# ---------------------------------------------------------------------------
+# attack command (Phase 3)
+# ---------------------------------------------------------------------------
+
+
+@cli.command()
+@click.argument("invariants_file", type=Path)
+@click.argument("graph_file", type=Path)
+@click.option(
+    "--output", "-o",
+    type=Path,
+    default=Path("output/attack_report.json"),
+    show_default=True,
+    help="Output JSON file for the swarm attack report.",
+)
+@click.option(
+    "--protocol-name", "-n",
+    default="",
+    help="Protocol name override (defaults to value from invariant report).",
+)
+@click.option(
+    "--min-confidence",
+    default=0.40,
+    show_default=True,
+    type=float,
+    help="Minimum hypothesis confidence to display (0.0–1.0).",
+)
+@click.option(
+    "--debate-rounds",
+    default=2,
+    show_default=True,
+    type=int,
+    help="Number of inter-agent debate rounds.",
+)
+@click.option(
+    "--workers",
+    default=4,
+    show_default=True,
+    type=int,
+    help="Parallel worker count for agent execution.",
+)
+@click.pass_context
+def attack(
+    ctx: click.Context,
+    invariants_file: Path,
+    graph_file: Path,
+    output: Path,
+    protocol_name: str,
+    min_confidence: float,
+    debate_rounds: int,
+    workers: int,
+) -> None:
+    """
+    Run Phase 3 adversarial swarm on an invariant report.
+
+    INVARIANTS_FILE is produced by the `infer` command.
+    GRAPH_FILE is produced by the `analyze` command.
+
+    Example::
+
+        zeropath analyze ./contracts -o output/graph.json
+        zeropath infer output/graph.json -n "MyProtocol" -o output/invariants.json
+        zeropath attack output/invariants.json output/graph.json -o output/attack_report.json
+    """
+    from zeropath.adversarial import SwarmOrchestrator
+    from zeropath.invariants.models import InvariantReport
+
+    # Load invariant report
+    try:
+        with open(invariants_file, "r", encoding="utf-8") as f:
+            inv_data = json.load(f)
+        inv_report = InvariantReport.model_validate(inv_data)
+    except Exception as exc:
+        console.print(f"[red]✗ Failed to load invariants file:[/red] {exc}")
+        raise click.Exit(1)
+
+    # Load protocol graph
+    try:
+        with open(graph_file, "r", encoding="utf-8") as f:
+            graph_data = json.load(f)
+        graph = ProtocolGraph.model_validate(graph_data)
+    except Exception as exc:
+        console.print(f"[red]✗ Failed to load graph file:[/red] {exc}")
+        raise click.Exit(1)
+
+    if protocol_name:
+        inv_report.protocol_name = protocol_name
+
+    with console.status("[bold red]Running adversarial swarm (Phase 3)…"):
+        swarm = SwarmOrchestrator(max_workers=workers, debate_rounds=debate_rounds)
+        swarm_report = swarm.run(inv_report, graph)
+
+    # Save JSON
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with open(output, "w", encoding="utf-8") as f:
+        json.dump(swarm_report.model_dump(by_alias=True), f, indent=2, default=str)
+    console.print(f"[green]✓[/green] Attack report saved → {output}")
+
+    # Display summary
+    _display_attack_summary(swarm_report, min_confidence)
+
+
+def _display_attack_summary(swarm_report: "SwarmReport", min_confidence: float) -> None:
+    from rich.markup import escape
+    from zeropath.adversarial.models import HypothesisStatus
+
+    _STATUS_COLOR = {
+        HypothesisStatus.CONSENSUS: "red bold",
+        HypothesisStatus.ENDORSED: "red",
+        HypothesisStatus.CHALLENGED: "yellow",
+        HypothesisStatus.PROPOSED: "white",
+        HypothesisStatus.REJECTED: "dim",
+    }
+
+    visible = [
+        h for h in swarm_report.hypotheses
+        if h.confidence >= min_confidence
+        and h.status != HypothesisStatus.REJECTED
+    ]
+
+    table = Table(
+        title=f"Attack Hypotheses — {swarm_report.protocol_name}",
+        show_lines=True,
+    )
+    table.add_column("Status", min_width=12)
+    table.add_column("Attack Class", style="cyan")
+    table.add_column("Confidence", justify="right")
+    table.add_column("Agent")
+    table.add_column("Title")
+
+    for hyp in visible:
+        color = _STATUS_COLOR.get(hyp.status, "white")
+        table.add_row(
+            Text(hyp.status.value.upper(), style=color),
+            hyp.attack_class.value,
+            f"{hyp.confidence:.0%}",
+            hyp.proposed_by.replace("Agent", ""),
+            escape(hyp.title[:80]),
+        )
+
+    console.print(table)
+
+    # Stats panel
+    meta = swarm_report.analysis_metadata
+    console.print(Panel(
+        f"Total hypotheses: [bold]{len(swarm_report.hypotheses)}[/bold]  |  "
+        f"Shown (≥{min_confidence:.0%}): [bold]{len(visible)}[/bold]  |  "
+        f"Consensus: [red bold]{len(swarm_report.critical_hypotheses)}[/red bold]  |  "
+        f"Rejected: [dim]{swarm_report.rejected_count}[/dim]\n"
+        f"Agents: {meta.get('agents', [])}  |  "
+        f"Debate rounds: {meta.get('debate_rounds', 0)}  |  "
+        f"Time: {meta.get('elapsed_seconds', 0):.1f}s",
+        title="Swarm Summary",
+        expand=False,
+    ))
+
+
+# ---------------------------------------------------------------------------
+# sequence command (Phase 4)
+# ---------------------------------------------------------------------------
+
+
+@cli.command()
+@click.argument("attack_file", type=Path)
+@click.argument("graph_file", type=Path)
+@click.option(
+    "--output-dir", "-o",
+    type=Path,
+    default=Path("output/sequences"),
+    show_default=True,
+    help="Directory to write sequence JSON + PoC test files.",
+)
+@click.option(
+    "--framework",
+    type=click.Choice(["foundry", "hardhat", "both"], case_sensitive=False),
+    default="both",
+    show_default=True,
+    help="Test framework(s) for generated PoC code.",
+)
+@click.option(
+    "--min-confidence",
+    default=0.40,
+    show_default=True,
+    type=float,
+    help="Minimum hypothesis confidence to sequence.",
+)
+@click.pass_context
+def sequence(
+    ctx: click.Context,
+    attack_file: Path,
+    graph_file: Path,
+    output_dir: Path,
+    framework: str,
+    min_confidence: float,
+) -> None:
+    """
+    Run Phase 4 transaction sequence generation on a swarm attack report.
+
+    ATTACK_FILE is produced by the `attack` command.
+    GRAPH_FILE is produced by the `analyze` command.
+
+    Outputs:
+      - sequence_report.json  (full structured report)
+      - sequences/*.t.sol     (Foundry tests)
+      - sequences/*.test.ts   (Hardhat tests)
+
+    Example::
+
+        zeropath attack output/invariants.json output/graph.json -o output/attack_report.json
+        zeropath sequence output/attack_report.json output/graph.json -o output/sequences/
+    """
+    from zeropath.adversarial.models import SwarmReport
+    from zeropath.sequencer import SequenceOrchestrator, TestFramework
+
+    # Load swarm report
+    try:
+        with open(attack_file, "r", encoding="utf-8") as f:
+            attack_data = json.load(f)
+        swarm_report = SwarmReport.model_validate(attack_data)
+    except Exception as exc:
+        console.print(f"[red]✗ Failed to load attack file:[/red] {exc}")
+        raise click.Exit(1)
+
+    # Load protocol graph
+    try:
+        with open(graph_file, "r", encoding="utf-8") as f:
+            graph_data = json.load(f)
+        graph = ProtocolGraph.model_validate(graph_data)
+    except Exception as exc:
+        console.print(f"[red]✗ Failed to load graph file:[/red] {exc}")
+        raise click.Exit(1)
+
+    fw_map = {"foundry": TestFramework.FOUNDRY, "hardhat": TestFramework.HARDHAT, "both": TestFramework.BOTH}
+    fw = fw_map[framework.lower()]
+
+    with console.status("[bold blue]Generating transaction sequences (Phase 4)…"):
+        orchestrator = SequenceOrchestrator(frameworks=fw, min_confidence=min_confidence)
+        seq_report = orchestrator.run(swarm_report, graph)
+
+    # Write outputs
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Main report JSON
+    report_path = output_dir / "sequence_report.json"
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(seq_report.model_dump(by_alias=True), f, indent=2, default=str)
+    console.print(f"[green]✓[/green] Sequence report → {report_path}")
+
+    # Write individual PoC files
+    poc_dir = output_dir / "poc"
+    poc_dir.mkdir(exist_ok=True)
+    for seq in seq_report.sequences:
+        if seq.foundry_test:
+            fpath = poc_dir / seq.foundry_test.filename
+            fpath.write_text(seq.foundry_test.code, encoding="utf-8")
+        if seq.hardhat_test:
+            hpath = poc_dir / seq.hardhat_test.filename
+            hpath.write_text(seq.hardhat_test.code, encoding="utf-8")
+
+    console.print(f"[green]✓[/green] PoC files → {poc_dir}/")
+
+    # Display summary
+    _display_sequence_summary(seq_report)
+
+
+def _display_sequence_summary(seq_report: "SequenceReport") -> None:
+    from rich.markup import escape
+    from zeropath.sequencer.models import SequenceStatus
+
+    _STATUS_COLOR = {
+        SequenceStatus.GENERATED: "cyan",
+        SequenceStatus.SIMULATION_PASSED: "green",
+        SequenceStatus.VALIDATED: "green bold",
+        SequenceStatus.SIMULATION_FAILED: "red",
+        SequenceStatus.REJECTED: "dim",
+    }
+
+    table = Table(
+        title=f"Transaction Sequences — {seq_report.protocol_name}",
+        show_lines=True,
+    )
+    table.add_column("Attack Class", style="cyan")
+    table.add_column("Completeness", justify="right")
+    table.add_column("PoC Ready", justify="center")
+    table.add_column("Manual Params", justify="center")
+    table.add_column("Title")
+
+    for seq in seq_report.sequences:
+        has_poc = "✓" if (seq.foundry_test or seq.hardhat_test) else "✗"
+        has_manual = str(len(seq.requires_manual_params)) if seq.requires_manual_params else "—"
+        table.add_row(
+            seq.attack_class,
+            f"{seq.completeness_score:.0%}",
+            has_poc,
+            has_manual,
+            escape(seq.hypothesis_title[:70]),
+        )
+
+    console.print(table)
+    console.print(Panel(
+        f"Hypotheses processed: [bold]{seq_report.total_hypotheses_input}[/bold]  |  "
+        f"Sequences: [bold]{seq_report.sequences_generated}[/bold]  |  "
+        f"With PoC: [green bold]{seq_report.sequences_with_full_poc}[/green bold]  |  "
+        f"Ready to simulate: [cyan]{len(seq_report.ready_to_simulate)}[/cyan]",
+        title="Phase 4 Summary",
         expand=False,
     ))
 

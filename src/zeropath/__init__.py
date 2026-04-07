@@ -2,19 +2,26 @@
 ZeroPath — Production-grade smart contract analyzer.
 
 Phase 1: Protocol Ingestion + Graph Builder
+Phase 2: Invariant Inference Engine
+Phase 3: Adversarial Attack Hypothesis Swarm
 
 Public API::
 
     from zeropath import ProtocolGraphBuilder, ProtocolGraph, Neo4jGraphDB
+    from zeropath.invariants import InvariantInferenceEngine
+    from zeropath.adversarial import SwarmOrchestrator
 
     builder = ProtocolGraphBuilder()
     graph = builder.build_from_directory(Path("contracts/"))
 
-    with Neo4jGraphDB(uri=..., username=..., password=...) as db:
-        db.store_protocol_graph(graph)
+    inv_engine = InvariantInferenceEngine()
+    inv_report = inv_engine.analyse(graph, protocol_name="MyProtocol")
+
+    swarm = SwarmOrchestrator()
+    attack_report = swarm.run(inv_report, graph)
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 from zeropath.exceptions import (
     ASTExtractionError,
@@ -52,6 +59,8 @@ from zeropath.models import (
 from zeropath.bytecode_decompiler import DecompileResult, HeimdallDecompiler
 from zeropath.onchain_fetcher import OnChainFetcher, OnChainSource
 from zeropath.parser import ContractParser
+from zeropath.adversarial import SwarmOrchestrator, SwarmReport
+from zeropath.adversarial.models import AttackHypothesis, AttackClass
 
 __all__ = [
     # Version
@@ -94,4 +103,9 @@ __all__ = [
     "VersionDiffError",
     "BytecodeDecompilationError",
     "GitHubIngestionError",
+    # Phase 3 — Adversarial Swarm
+    "SwarmOrchestrator",
+    "SwarmReport",
+    "AttackHypothesis",
+    "AttackClass",
 ]
