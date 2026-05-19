@@ -15,12 +15,15 @@ Public API::
         print(seq.foundry_test.code)
 """
 
+from zeropath.sequencer.abi_encoder import ABIEncoder, encode_call, function_selector
 from zeropath.sequencer.codegen import FoundryTestGenerator, HardhatScriptGenerator
+from zeropath.sequencer.gas_estimator import GasEstimator, prune_unprofitable
 from zeropath.sequencer.models import (
     AttackContext,
     CallerType,
     CallEncoding,
     GeneratedTest,
+    OnChainStateSnapshot,
     ProfitEstimate,
     SequenceReport,
     SequenceStatus,
@@ -28,6 +31,8 @@ from zeropath.sequencer.models import (
     TransactionSequence,
     TxCall,
 )
+from zeropath.sequencer.mutation import MutationEngine
+from zeropath.sequencer.onchain_state import OnChainStateFetcher
 from zeropath.sequencer.sequencer import SequenceOrchestrator
 
 __all__ = [
@@ -35,11 +40,20 @@ __all__ = [
     "SequenceOrchestrator",
     "FoundryTestGenerator",
     "HardhatScriptGenerator",
+    # Phase 4 extensions
+    "ABIEncoder",
+    "encode_call",
+    "function_selector",
+    "OnChainStateFetcher",
+    "GasEstimator",
+    "prune_unprofitable",
+    "MutationEngine",
     # Models
     "SequenceReport",
     "TransactionSequence",
     "TxCall",
     "AttackContext",
+    "OnChainStateSnapshot",
     "GeneratedTest",
     "ProfitEstimate",
     "SequenceStatus",

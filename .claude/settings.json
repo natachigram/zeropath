@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest tests/test_adversarial_phase3.py -x -q)",
+      "Bash(python3 -m pytest tests/test_adversarial_phase3.py -x -q)",
+      "Bash(python3 -c \"import eth_abi; print\\('eth_abi available:', eth_abi.__version__\\)\")",
+      "Bash(python3 -c \"import web3; print\\('web3 available:', web3.__version__\\)\")",
+      "Bash(python3 -c \"import eth_utils; print\\('eth_utils available:', eth_utils.__version__\\)\")",
+      "Bash(/Users/macbook/Documents/zeropath/.venv/bin/python -m pytest tests/test_adversarial_phase3.py -x)",
+      "Bash(/Users/macbook/Documents/zeropath/.venv/bin/python -m pip install -e . --quiet)",
+      "Bash(/Users/macbook/Documents/zeropath/.venv/bin/python -c \"import sys; sys.path.insert\\(0, 'src'\\); from zeropath.sequencer import SequenceOrchestrator; print\\('sequencer module imports ok'\\); from zeropath.adversarial import SwarmReport; print\\('adversarial imports ok'\\)\")",
+      "Bash(/Users/macbook/Documents/zeropath/.venv/bin/python -m pip list)",
+      "Bash(/Users/macbook/Documents/zeropath/.venv/bin/python -m pytest /Users/macbook/Documents/zeropath/tests/test_adversarial_phase3.py -x -q --no-header --no-cov)"
+    ]
+  }
+}

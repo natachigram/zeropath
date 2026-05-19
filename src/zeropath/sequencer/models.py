@@ -95,14 +95,27 @@ class SequenceStatus(str, Enum):
 
 
 class TxCall(BaseModel):
-    """A single transaction or call within an attack sequence."""
+    """
+    A single transaction or call within an attack sequence.
+
+    Carries two parallel representations:
+
+    * Template form (``target_address_expr``, ``calldata_expr``, ``value_expr``)
+      — Solidity expression strings consumed by the Foundry / Hardhat codegen.
+    * Executable form (``target_address``, ``params`` + ``param_types``,
+      ``value_wei``, ``calldata_hex``) — concrete on-chain values that
+      Phase 5 can submit to Anvil without further interpretation.
+
+    Builders may populate either or both. The ABI encoder fills
+    ``calldata_hex`` automatically from ``function_signature`` + ``params``.
+    """
 
     model_config = ConfigDict(populate_by_name=True)
 
     step: int = Field(description="1-indexed step number within the sequence")
     description: str = Field(description="Human-readable description of this call")
 
-    # Target
+    # ----- Template form (codegen) -----
     target_address_expr: str = Field(
         description="Solidity expression resolving to target address (e.g. 'address(vault)', 'AAVE_V3')"
     )
@@ -118,6 +131,31 @@ class TxCall(BaseModel):
     )
     value_expr: str = Field(
         "0", description="ETH value expression e.g. '1 ether', 'flashAmount'"
+    )
+
+    # ----- Executable form (Phase 5 submission) -----
+    target_address: Optional[str] = Field(
+        None, description="0x-prefixed concrete target address. None = templated only."
+    )
+    params: list[Any] = Field(
+        default_factory=list,
+        description="Concrete argument values matching function_signature."
+    )
+    param_types: list[str] = Field(
+        default_factory=list,
+        description="Solidity types for each param (e.g. ['uint256', 'address[]'])."
+    )
+    value_wei: int = Field(0, ge=0, description="Concrete ETH value in wei.")
+    calldata_hex: Optional[str] = Field(
+        None,
+        description="0x-prefixed ABI-encoded calldata. Populated by ABIEncoder."
+    )
+    expected_state_change: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Predicted state mutations: {storage_slot|balance_key: expected_value}. "
+            "Used by Phase 5 to verify the call had the intended effect."
+        ),
     )
 
     # Caller
@@ -141,6 +179,44 @@ class TxCall(BaseModel):
     revert_safe: bool = False
 
 
+class OnChainStateSnapshot(BaseModel):
+    """
+    Live mainnet state captured at a specific block.
+
+    Populated by ``sequencer.onchain_state.OnChainStateFetcher`` and consumed
+    by builders that need real reserves / prices / balances to make the
+    generated sequence executable on a Foundry fork (spec: "fetch real
+    mainnet state at a specified block before generating sequences").
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    block_number: int = Field(description="Block at which state was fetched")
+    block_timestamp: Optional[int] = None
+    chain_id: int = 1
+
+    # Pool reserves: pool_address → (reserve0, reserve1, blockTimestampLast)
+    pool_reserves: dict[str, tuple[int, int, int]] = Field(default_factory=dict)
+
+    # Oracle prices: oracle_address → (price, decimals, updated_at)
+    oracle_prices: dict[str, tuple[int, int, int]] = Field(default_factory=dict)
+
+    # Token balances: (token_address, holder_address) joined by ":" → balance
+    token_balances: dict[str, int] = Field(default_factory=dict)
+
+    # Token metadata: token_address → {symbol, decimals, totalSupply}
+    token_metadata: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+    # ETH balances
+    eth_balances: dict[str, int] = Field(default_factory=dict)
+
+    # Free-form raw storage slots if needed: (address, slot) → value
+    storage_slots: dict[str, str] = Field(default_factory=dict)
+
+    fetched_at_unix: Optional[int] = None
+    rpc_provider: str = "unknown"
+
+
 class AttackContext(BaseModel):
     """
     Environment configuration needed to execute the attack sequence.
@@ -161,6 +237,9 @@ class AttackContext(BaseModel):
         "ETH_RPC_URL",
         description="Environment variable name holding the RPC URL"
     )
+
+    # Live on-chain state captured at fork_block (filled by OnChainStateFetcher)
+    onchain_snapshot: Optional[OnChainStateSnapshot] = None
 
     # Known contract addresses (populated from on-chain data or graph)
     contract_addresses: dict[str, str] = Field(
@@ -292,6 +371,37 @@ class TransactionSequence(BaseModel):
     requires_manual_params: list[str] = Field(
         default_factory=list,
         description="Parameters that require manual lookup (e.g. exact token addresses)"
+    )
+
+    # ----- Phase 5 execution metadata (spec output requirement) -----
+    block_number: Optional[int] = Field(
+        None, description="Fork block at which on-chain state was captured."
+    )
+    fork_url_env: str = Field(
+        "ETH_RPC_URL",
+        description="Environment variable holding the RPC URL for the fork.",
+    )
+    total_gas_estimate: int = Field(
+        0, ge=0, description="Sum of per-call gas estimates."
+    )
+    estimated_profit_wei: int = Field(
+        0, description="Estimated attacker profit in wei (negative = loss)."
+    )
+    uses_flash_loan: bool = False
+    protocols_touched: list[str] = Field(
+        default_factory=list,
+        description="Distinct external protocols this sequence interacts with.",
+    )
+
+    # ----- Mutation tracking -----
+    is_mutation_of: Optional[str] = Field(
+        None,
+        description="If this sequence is a mutation, ID of the parent sequence.",
+    )
+    mutation_strategy: Optional[str] = Field(
+        None,
+        description="Mutation operator that produced this variant "
+        "(e.g. 'reorder_steps', 'scale_amount_10x', 'substitute_flash_provider').",
     )
 
     # Notes for the auditor

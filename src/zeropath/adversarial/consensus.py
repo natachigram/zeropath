@@ -4,25 +4,61 @@ ConsensusAggregator — Phase 3 deduplication and ranking.
 After debate, this module:
   1. Removes REJECTED hypotheses (configurable)
   2. Deduplicates: same (invariant_id, attack_class) from different agents → keep best
-  3. Ranks by composite score: confidence * 0.5 + specificity * 0.3 + consensus * 0.2
+  3. Ranks by composite score:
+       confidence * 0.40 + specificity * 0.25 + consensus * 0.15 + precedent * 0.20
+     Historical-precedent boost lifts hypotheses that match real exploits in the
+     RAG-grounded Phase 2 corpus (spec: rank by "historical precedent match").
   4. Returns final sorted list for the SwarmReport
 """
 
 from __future__ import annotations
 
 import logging
+import math
 
 from zeropath.adversarial.models import AttackHypothesis, AttackClass, HypothesisStatus
 
 logger = logging.getLogger(__name__)
 
-# Ranking weights
-_W_CONFIDENCE = 0.50
-_W_SPECIFICITY = 0.30
-_W_CONSENSUS = 0.20
+# Ranking weights — must sum to 1.0
+_W_CONFIDENCE = 0.40
+_W_SPECIFICITY = 0.25
+_W_CONSENSUS = 0.15
+_W_PRECEDENT = 0.20
+
+# Saturation point for historical loss (USD). Losses at/above this map to 1.0.
+# $100M chosen to span DAO ($60M) through Ronin ($625M) without single outliers
+# (Poly Network $611M, Mt Gox $450M) dominating the curve.
+_PRECEDENT_LOSS_SATURATION_USD = 100_000_000
 
 # Minimum composite score to keep a hypothesis
 _MIN_COMPOSITE = 0.20
+
+
+def _precedent_score(h: AttackHypothesis) -> float:
+    """
+    Historical precedent score in [0, 1].
+
+    Combines presence of named precedent protocols with a saturating function
+    of the worst known loss. A hypothesis whose attack class has no real-world
+    precedent gets 0 and falls back to confidence/specificity/consensus only.
+    """
+    protocol_signal = 0.0
+    if h.historical_precedent_protocols:
+        # Diminishing returns — 1 protocol = 0.5, 2 = 0.75, 3+ = 0.875+
+        n = len(h.historical_precedent_protocols)
+        protocol_signal = 1.0 - 0.5 ** n
+
+    loss_signal = 0.0
+    if h.historical_loss_usd and h.historical_loss_usd > 0:
+        # log-scaled saturating curve
+        loss_signal = min(
+            1.0,
+            math.log10(1 + h.historical_loss_usd) / math.log10(1 + _PRECEDENT_LOSS_SATURATION_USD),
+        )
+
+    # Either signal alone yields some score; both together approach 1.0.
+    return min(1.0, 0.5 * protocol_signal + 0.5 * loss_signal + 0.25 * protocol_signal * loss_signal)
 
 
 def _composite_score(h: AttackHypothesis) -> float:
@@ -30,6 +66,7 @@ def _composite_score(h: AttackHypothesis) -> float:
         h.confidence * _W_CONFIDENCE
         + h.specificity_score * _W_SPECIFICITY
         + h.agent_consensus_score * _W_CONSENSUS
+        + _precedent_score(h) * _W_PRECEDENT
     )
 
 

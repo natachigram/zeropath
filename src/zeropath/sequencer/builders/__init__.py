@@ -1,6 +1,7 @@
 """Phase 4 sequence builders."""
 
 from zeropath.sequencer.builders.access_control import AccessControlSequenceBuilder
+from zeropath.sequencer.builders.composability import ComposabilitySequenceBuilder
 from zeropath.sequencer.builders.flash_loan import FlashLoanSequenceBuilder
 from zeropath.sequencer.builders.governance import GovernanceSequenceBuilder
 from zeropath.sequencer.builders.integer_math import IntegerMathSequenceBuilder
@@ -14,4 +15,5 @@ __all__ = [
     "OracleManipulationSequenceBuilder",
     "GovernanceSequenceBuilder",
     "IntegerMathSequenceBuilder",
+    "ComposabilitySequenceBuilder",
 ]

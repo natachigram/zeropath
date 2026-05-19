@@ -45,9 +45,10 @@ class OracleManipulationSequenceBuilder(BaseSequenceBuilder):
     def _spot_price_sequence(self, hypothesis: AttackHypothesis) -> list[TxCall]:
         target_contract = (hypothesis.contracts_involved or ["LendingPool"])[0]
         target_fn = (hypothesis.functions_involved or ["borrow"])[0]
-        oracle_dep = hypothesis.oracle_dependencies[0] if hypothesis.oracle_dependencies else None
-        oracle_contract = oracle_dep.oracle_contract if oracle_dep else "IUniswapV2Pair"
-        read_fn = oracle_dep.read_function if oracle_dep else "getReserves"
+        # AttackHypothesis doesn't carry oracle_dependencies directly; default to
+        # canonical UniV2 pair until the upstream model exposes the dep.
+        oracle_contract = "IUniswapV2Pair"
+        read_fn = "getReserves"
 
         return [
             self._call(
@@ -148,8 +149,7 @@ class OracleManipulationSequenceBuilder(BaseSequenceBuilder):
         ]
 
     def _twap_manipulation_sequence(self, hypothesis: AttackHypothesis) -> list[TxCall]:
-        oracle_dep = hypothesis.oracle_dependencies[0] if hypothesis.oracle_dependencies else None
-        oracle_contract = oracle_dep.oracle_contract if oracle_dep else "UniswapOracleV2"
+        oracle_contract = "UniswapOracleV2"
 
         return [
             self._call(

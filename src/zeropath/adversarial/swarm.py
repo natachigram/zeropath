@@ -65,7 +65,7 @@ class SwarmOrchestrator:
         self,
         agents: list[BaseAdversarialAgent] | None = None,
         max_workers: int = 4,
-        debate_rounds: int = 2,
+        debate_rounds: int = 3,
     ) -> None:
         self.agents = agents or list(_DEFAULT_AGENTS)
         self.max_workers = max_workers

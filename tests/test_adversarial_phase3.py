@@ -1056,11 +1056,15 @@ class TestSwarmOrchestrator:
         assert result.protocol_name == "TestProtocol"
         assert isinstance(result.hypotheses, list)
 
-    def test_hypotheses_sorted_by_confidence(self):
+    def test_hypotheses_sorted_by_composite_score(self):
+        # Spec ranks by composite (confidence + specificity + consensus + precedent),
+        # not raw confidence. Verify monotonic non-increasing composite ordering.
+        from zeropath.adversarial.consensus import _composite_score
+
         swarm = SwarmOrchestrator(debate_rounds=1)
         result = swarm.run(self._lending_report(), self._lending_graph())
-        confidences = [h.confidence for h in result.hypotheses]
-        assert confidences == sorted(confidences, reverse=True)
+        scores = [_composite_score(h) for h in result.hypotheses]
+        assert scores == sorted(scores, reverse=True)
 
     def test_metadata_populated(self):
         swarm = SwarmOrchestrator(debate_rounds=1)
