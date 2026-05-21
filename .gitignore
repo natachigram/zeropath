@@ -141,3 +141,7 @@ zeropath.log
 # Contracts (optional)
 contracts/vendor/
 contracts/node_modules/
+
+# Internal planning + prompt assets (not for the public repo)
+AUDIT_PROMPT.md
+phases.md
