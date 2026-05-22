@@ -31,7 +31,7 @@ def _utc_now() -> str:
 
 
 class IntelSource(str, Enum):
-    """Provenance of external threat-intel records."""
+    """Provenance of external threat-intel records + contest disclosures."""
 
     DEFIHACKLABS = "defihacklabs"
     REKT = "rekt"
@@ -39,6 +39,14 @@ class IntelSource(str, Enum):
     CHAINALYSIS = "chainalysis"
     MANUAL = "manual"
     OTHER = "other"
+
+    # Audit-contest sources (Phase 13). Distinct from CANTINA's general
+    # platform so callers can filter by "actual exploit" vs "audit finding".
+    CODE4RENA = "code4rena"
+    SHERLOCK = "sherlock"
+    CANTINA = "cantina"
+    SOLODIT = "solodit"
+    SPEARBIT = "spearbit"
 
 
 class InferenceKind(str, Enum):

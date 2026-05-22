@@ -1035,6 +1035,585 @@ def _display_query_results(results: list[dict]) -> None:
     console.print(table)
 
 
+@cli.command()
+@click.argument(
+    "repo_path",
+    type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path),
+)
+@click.option(
+    "--platform",
+    type=click.Choice(["cantina", "code4rena", "sherlock", "immunefi", "generic"]),
+    default="generic", show_default=True,
+    help="Target contest platform — drives output formatting.",
+)
+@click.option(
+    "-n", "--contest-name", default="", help="Human-readable contest name."
+)
+@click.option(
+    "--scope",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="File listing in-scope Solidity files (one per line, repo-relative).",
+)
+@click.option(
+    "--out", "-o",
+    type=click.Path(path_type=Path),
+    default=Path("output/contest-submissions.json"),
+    show_default=True,
+    help="Path for the submission JSON.",
+)
+@click.option(
+    "--invariants",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Optional path to a Phase 2 InvariantReport JSON to enrich LLM context.",
+)
+@click.option(
+    "--kg-dir",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help=(
+        "Directory containing a Phase 8 InMemoryKGStore snapshot "
+        "(kg.json). Enables RAG over prior contest findings."
+    ),
+)
+@click.option(
+    "--llm-budget-usd", type=float, default=200.0, show_default=True,
+    help="Hard cap on LLM spend for this run.",
+)
+@click.option(
+    "--confidence-threshold", type=float, default=0.70, show_default=True,
+    help="Minimum finding confidence required for submission.",
+)
+@click.option(
+    "--severity-floor",
+    type=click.Choice(["critical", "high", "medium", "low", "informational"]),
+    default="medium", show_default=True,
+    help="Lowest severity that will be submitted.",
+)
+@click.option(
+    "--workers", type=int, default=4, show_default=True,
+    help="Parallel per-file audit workers.",
+)
+@click.option(
+    "--no-llm", is_flag=True, help="Disable LLM Reasoner (skeleton run).",
+)
+@click.option(
+    "--no-spec-miner", is_flag=True, help="Skip spec-mining stage.",
+)
+@click.option(
+    "--no-foundry", is_flag=True, help="Skip Foundry PoC verification.",
+)
+@click.option(
+    "--no-contrarian", is_flag=True, help="Skip LLM contrarian review pass.",
+)
+@click.pass_context
+def contest(
+    ctx: click.Context,
+    repo_path: Path,
+    platform: str,
+    contest_name: str,
+    scope: Optional[Path],
+    out: Path,
+    invariants: Optional[Path],
+    kg_dir: Optional[Path],
+    llm_budget_usd: float,
+    confidence_threshold: float,
+    severity_floor: str,
+    workers: int,
+    no_llm: bool,
+    no_spec_miner: bool,
+    no_foundry: bool,
+    no_contrarian: bool,
+) -> None:
+    """Run the contest-winning pipeline against a target repo.
+
+    Examples::
+
+        zeropath contest ./contracts \\
+            --platform cantina \\
+            --scope ./scope.txt \\
+            --llm-budget-usd 200 \\
+            --confidence-threshold 0.70 \\
+            -o output/cantina-submissions.json
+    """
+    import json as _json
+
+    from zeropath.contest import (
+        ContestConfig, ContestOrchestrator, ContestPlatform,
+    )
+    from zeropath.invariants.models import InvariantReport
+    from zeropath.knowledge import (
+        InMemoryKGStore, KnowledgeGraphOrchestrator,
+    )
+
+    scope_files: list[str] = []
+    if scope:
+        scope_files = [
+            line.strip()
+            for line in scope.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+
+    knowledge: Optional[KnowledgeGraphOrchestrator] = None
+    if kg_dir:
+        store = InMemoryKGStore()
+        snap = kg_dir / "kg.json"
+        if snap.exists():
+            try:
+                store.restore(snap)
+                knowledge = KnowledgeGraphOrchestrator(store)
+                click.echo(f"[zeropath] loaded KG from {snap}", err=True)
+            except Exception as exc:
+                click.echo(f"[zeropath] failed to restore KG: {exc}", err=True)
+
+    inv_report = None
+    if invariants:
+        try:
+            inv_report = InvariantReport.model_validate_json(
+                invariants.read_text(encoding="utf-8"),
+            )
+            click.echo(
+                f"[zeropath] loaded {len(inv_report.invariants)} Phase 2 invariants",
+                err=True,
+            )
+        except Exception as exc:
+            click.echo(f"[zeropath] failed to load --invariants: {exc}", err=True)
+
+    cfg = ContestConfig(
+        platform=ContestPlatform(platform),
+        contest_name=contest_name,
+        repo_path=str(repo_path),
+        scope_files=scope_files,
+        llm_budget_usd=llm_budget_usd,
+        submit_confidence_threshold=confidence_threshold,
+        submit_severity_floor=severity_floor,
+        parallel_workers=max(1, workers),
+        use_llm=not no_llm,
+        use_spec_miner=not no_spec_miner,
+        use_foundry_verifier=not no_foundry,
+        use_contrarian=not no_contrarian,
+    )
+
+    click.echo(
+        f"[zeropath] contest mode: platform={cfg.platform.value} "
+        f"repo={cfg.repo_path} scope_files={len(scope_files) or 'auto'} "
+        f"llm={cfg.use_llm} spec={cfg.use_spec_miner} foundry={cfg.use_foundry_verifier}",
+        err=True,
+    )
+
+    report = ContestOrchestrator(
+        cfg,
+        knowledge=knowledge,
+        inferred_invariant_report=inv_report,
+    ).run()
+
+    # Render the actionable subset using the platform formatter for the
+    # final on-disk file. The full ContestReport is dumped alongside.
+    actionable = report.ready_to_submit
+    payload = {
+        "config": cfg.model_dump(mode="json"),
+        "summary": {
+            "files_scanned": report.files_scanned,
+            "raw_findings": report.raw_findings_count,
+            "actionable_findings": len(actionable),
+            "submitted_count": report.submitted_count,
+            "discarded_count": report.discarded_count,
+            "by_severity": report.findings_by_severity,
+            "llm_spent_usd": report.llm_spent_usd,
+            "llm_calls": report.llm_calls,
+            "elapsed_seconds": report.elapsed_seconds,
+        },
+        "submissions": [
+            {
+                "rank": s.rank,
+                "disposition": s.disposition.value,
+                "finding": s.finding.model_dump(mode="json"),
+                "rendered_payload": s.rendered_payload,
+            }
+            for s in actionable
+        ],
+        "all_submissions": [s.model_dump(mode="json") for s in report.submissions],
+        "metadata": report.analysis_metadata,
+    }
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(_json.dumps(payload, indent=2, default=str), encoding="utf-8")
+
+    # Pretty stdout summary.
+    console = Console()
+    table = Table(title=f"Contest report — {cfg.platform.value}", show_header=True)
+    table.add_column("Rank"); table.add_column("Severity")
+    table.add_column("Confidence"); table.add_column("Dup%")
+    table.add_column("Class"); table.add_column("Title")
+    for s in actionable[:20]:
+        table.add_row(
+            str(s.rank),
+            s.finding.severity.upper(),
+            f"{s.finding.confidence:.2f}",
+            f"{int(s.finding.duplicate_likelihood * 100)}%",
+            s.finding.attack_class,
+            s.finding.title[:60],
+        )
+    console.print(table)
+    click.echo(f"[zeropath] wrote {len(actionable)} actionable submissions → {out}", err=True)
+    click.echo(
+        f"[zeropath] LLM spend: ${report.llm_spent_usd:.4f} "
+        f"({report.llm_calls} calls)",
+        err=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# MCP (Model Context Protocol) — expose ZeroPath to IDE-side agents
+# ---------------------------------------------------------------------------
+
+
+@cli.group()
+@click.pass_context
+def mcp(ctx: click.Context) -> None:
+    """Run ZeroPath as an MCP server / install it into your IDE."""
+
+
+@mcp.command("serve")
+@click.option(
+    "--kg-dir",
+    type=click.Path(exists=False, file_okay=False, path_type=Path),
+    default=None,
+    help="Directory holding a Phase 8 kg.json snapshot.",
+)
+@click.pass_context
+def mcp_serve(ctx: click.Context, kg_dir: Optional[Path]) -> None:
+    """Run the MCP server over stdio (invoked by your IDE, not directly)."""
+    from zeropath.mcp_server import build_default_server
+
+    server = build_default_server(kg_dir=kg_dir)
+    server.serve_forever()
+
+
+@mcp.command("install")
+@click.option(
+    "--client",
+    type=click.Choice(
+        ["claude-desktop", "claude-code", "cursor", "cline", "continue", "all"],
+    ),
+    default="all", show_default=True,
+    help="Which IDE config to update.",
+)
+@click.option(
+    "--python", default=None,
+    help="Python interpreter the IDE should invoke. Defaults to current.",
+)
+@click.option(
+    "--kg-dir",
+    type=click.Path(exists=False, file_okay=False, path_type=Path),
+    default=None,
+    help="Persist a Phase 8 KG dir into the server config.",
+)
+@click.option("--dry-run", is_flag=True, help="Show the merged config without writing it.")
+@click.pass_context
+def mcp_install(
+    ctx: click.Context,
+    client: str,
+    python: Optional[str],
+    kg_dir: Optional[Path],
+    dry_run: bool,
+) -> None:
+    """Register the ZeroPath MCP server with one or more IDEs."""
+    from zeropath.mcp_server import install_for_all, install_for_client
+
+    kg = str(kg_dir) if kg_dir else None
+    if client == "all":
+        results = install_for_all(python=python, kg_dir=kg, dry_run=dry_run)
+    else:
+        results = [install_for_client(
+            client, python=python, kg_dir=kg, dry_run=dry_run,
+        )]
+
+    console = Console()
+    table = Table(title="ZeroPath MCP install", show_header=True)
+    table.add_column("Client"); table.add_column("Path"); table.add_column("Status")
+    for r in results:
+        if r.error:
+            status = f"[red]error[/red]: {r.error}"
+        elif dry_run:
+            status = "[yellow]dry-run[/yellow]"
+        elif r.already_present:
+            status = "[cyan]already present (no change)[/cyan]"
+        elif r.written:
+            status = "[green]installed[/green]"
+        else:
+            status = "[red]not written[/red]"
+        table.add_row(r.client, str(r.config_path), status)
+    console.print(table)
+    if not dry_run:
+        click.echo(
+            "[zeropath] restart your IDE to pick up the new MCP server.",
+            err=True,
+        )
+
+
+@mcp.command("uninstall")
+@click.option(
+    "--client",
+    type=click.Choice(
+        ["claude-desktop", "claude-code", "cursor", "cline", "continue", "all"],
+    ),
+    default="all", show_default=True,
+)
+@click.pass_context
+def mcp_uninstall(ctx: click.Context, client: str) -> None:
+    """Remove the ZeroPath MCP entry from one or all IDE configs."""
+    from zeropath.mcp_server import SUPPORTED_CLIENTS, uninstall_for_client
+
+    targets = SUPPORTED_CLIENTS if client == "all" else (client,)
+    console = Console()
+    table = Table(title="ZeroPath MCP uninstall", show_header=True)
+    table.add_column("Client"); table.add_column("Path"); table.add_column("Status")
+    for c in targets:
+        r = uninstall_for_client(c)
+        if r.error:
+            status = f"[red]error[/red]: {r.error}"
+        elif r.written:
+            status = "[green]removed[/green]"
+        else:
+            status = "[yellow]not present[/yellow]"
+        table.add_row(c, str(r.config_path), status)
+    console.print(table)
+
+
+@mcp.command("tools")
+@click.pass_context
+def mcp_tools(ctx: click.Context) -> None:
+    """List every tool / resource / prompt exposed by the MCP server."""
+    from zeropath.mcp_server import build_default_server
+
+    server = build_default_server()
+    console = Console()
+
+    table = Table(title="MCP tools", show_header=True)
+    table.add_column("Tool"); table.add_column("Description")
+    for name, tool in server.tools.items():
+        desc = tool.description.replace("\n", " ")
+        table.add_row(name, desc[:120])
+    console.print(table)
+
+    res_table = Table(title="MCP resources", show_header=True)
+    res_table.add_column("URI"); res_table.add_column("Description")
+    for uri, r in server.resources.items():
+        res_table.add_row(uri, r.description[:120])
+    console.print(res_table)
+
+    prompt_table = Table(title="MCP prompts", show_header=True)
+    prompt_table.add_column("Name"); prompt_table.add_column("Description")
+    for name, p in server.prompts.items():
+        prompt_table.add_row(name, p.description[:120])
+    console.print(prompt_table)
+
+
+# ---------------------------------------------------------------------------
+# Knowledge graph CLI — Phase 13 corpus ingestion
+# ---------------------------------------------------------------------------
+
+
+@cli.group()
+@click.pass_context
+def kg(ctx: click.Context) -> None:
+    """Manage the Phase 8 knowledge graph (ingest contest corpora, dump, query)."""
+
+
+def _load_or_init_kg(kg_dir: Optional[Path]):
+    """Restore an on-disk KG snapshot or create a fresh in-memory store."""
+    from zeropath.knowledge import InMemoryKGStore, KnowledgeGraphOrchestrator
+    store = InMemoryKGStore()
+    if kg_dir:
+        snap = kg_dir / "kg.json"
+        if snap.exists():
+            try:
+                store.restore(snap)
+                click.echo(f"[zeropath] restored KG from {snap}", err=True)
+            except Exception as exc:
+                click.echo(f"[zeropath] failed to restore KG: {exc}", err=True)
+    return KnowledgeGraphOrchestrator(store), store
+
+
+def _persist_kg(store, kg_dir: Optional[Path]) -> Optional[Path]:
+    if not kg_dir:
+        return None
+    kg_dir.mkdir(parents=True, exist_ok=True)
+    target = kg_dir / "kg.json"
+    store.snapshot(target)
+    return target
+
+
+@kg.command("ingest")
+@click.option(
+    "--source",
+    type=click.Choice(["code4rena", "sherlock", "cantina", "solodit", "spearbit"]),
+    required=True,
+    help="Which contest corpus to ingest.",
+)
+@click.option(
+    "--kg-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=Path("./kg"), show_default=True,
+    help="Directory holding the on-disk KG snapshot.",
+)
+@click.option(
+    "--max", "max_findings", type=int, default=None,
+    help="Cap the number of findings ingested from this source.",
+)
+@click.option(
+    "--cache-root", type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Override the corpus cache root (defaults to ~/.zeropath/cache/contest_corpus).",
+)
+@click.option(
+    "--solodit-dump", type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Optional Solodit JSON dump (use when the public API is unreachable).",
+)
+@click.option(
+    "--cantina-url", multiple=True,
+    help="Extra Cantina report URLs to fetch (repeatable).",
+)
+@click.pass_context
+def kg_ingest(
+    ctx: click.Context,
+    source: str,
+    kg_dir: Path,
+    max_findings: Optional[int],
+    cache_root: Optional[Path],
+    solodit_dump: Optional[Path],
+    cantina_url: tuple[str, ...],
+) -> None:
+    """Ingest one contest-platform corpus into the KG."""
+    from zeropath.knowledge import (
+        ContestCorpusIngestor, IngestionEngine, IntelSource,
+    )
+
+    orchestrator, store = _load_or_init_kg(kg_dir)
+    engine = IngestionEngine(store, only_actionable=False)
+    ingestor = ContestCorpusIngestor(engine, cache_root=cache_root)
+
+    scraper_kwargs: dict[str, Any] = {}
+    if source == "solodit" and solodit_dump:
+        scraper_kwargs["dump_path"] = solodit_dump
+    if source == "cantina" and cantina_url:
+        scraper_kwargs["extra_report_urls"] = list(cantina_url)
+
+    click.echo(f"[zeropath] ingesting {source}...", err=True)
+    summary = ingestor.ingest(
+        IntelSource(source),
+        max_findings=max_findings,
+        scraper_kwargs=scraper_kwargs,
+    )
+    persisted = _persist_kg(store, kg_dir)
+
+    console = Console()
+    table = Table(title=f"KG ingest — {source}", show_header=True)
+    table.add_column("Metric"); table.add_column("Value")
+    table.add_row("records parsed", str(summary["records_parsed"]))
+    table.add_row("records ingested", str(summary["records_ingested"]))
+    table.add_row("errors", str(summary["error_count"]))
+    if persisted:
+        table.add_row("snapshot", str(persisted))
+    console.print(table)
+    for err in summary["errors"][:10]:
+        click.echo(f"  - {err}", err=True)
+
+
+@kg.command("seed-all")
+@click.option(
+    "--kg-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=Path("./kg"), show_default=True,
+)
+@click.option(
+    "--max-per-source", type=int, default=None,
+    help="Cap findings ingested per source.",
+)
+@click.option(
+    "--cache-root", type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+)
+@click.option(
+    "--skip", multiple=True,
+    type=click.Choice(["code4rena", "sherlock", "cantina", "solodit", "spearbit"]),
+    help="Skip a specific source (repeatable).",
+)
+@click.pass_context
+def kg_seed_all(
+    ctx: click.Context,
+    kg_dir: Path,
+    max_per_source: Optional[int],
+    cache_root: Optional[Path],
+    skip: tuple[str, ...],
+) -> None:
+    """One-shot: ingest every available contest corpus into the KG."""
+    from zeropath.knowledge import (
+        ContestCorpusIngestor, IngestionEngine, IntelSource,
+    )
+
+    orchestrator, store = _load_or_init_kg(kg_dir)
+    engine = IngestionEngine(store, only_actionable=False)
+    ingestor = ContestCorpusIngestor(engine, cache_root=cache_root)
+
+    sources = [
+        s for s in (
+            IntelSource.CODE4RENA, IntelSource.SHERLOCK,
+            IntelSource.CANTINA, IntelSource.SOLODIT, IntelSource.SPEARBIT,
+        )
+        if s.value not in skip
+    ]
+    click.echo(
+        f"[zeropath] seed-all over {len(sources)} sources "
+        f"(max_per_source={max_per_source or 'unlimited'})",
+        err=True,
+    )
+    report = ingestor.seed_all(sources=sources, max_per_source=max_per_source)
+    persisted = _persist_kg(store, kg_dir)
+
+    console = Console()
+    table = Table(title="KG seed-all", show_header=True)
+    table.add_column("Source"); table.add_column("Parsed")
+    table.add_column("Ingested"); table.add_column("Errors")
+    for src_name, summary in report.by_source.items():
+        table.add_row(
+            src_name,
+            str(summary["records_parsed"]),
+            str(summary["records_ingested"]),
+            str(summary["error_count"]),
+        )
+    console.print(table)
+    click.echo(
+        f"[zeropath] total ingested: {report.total_records} "
+        f"(errors: {report.total_errors})", err=True,
+    )
+    if persisted:
+        click.echo(f"[zeropath] KG snapshot → {persisted}", err=True)
+
+
+@kg.command("summary")
+@click.option(
+    "--kg-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=Path("./kg"), show_default=True,
+)
+@click.pass_context
+def kg_summary_cmd(ctx: click.Context, kg_dir: Path) -> None:
+    """Print top-level KG stats (exploits, incidents, inferences, accuracy)."""
+    orchestrator, store = _load_or_init_kg(kg_dir)
+    report = orchestrator.report(protocol_name="all")
+    console = Console()
+    table = Table(title="KG summary", show_header=True)
+    table.add_column("Metric"); table.add_column("Value")
+    table.add_row("validated exploits", str(report.exploits_ingested))
+    table.add_row("external incidents", str(report.incidents_ingested))
+    table.add_row("inferences", str(report.inferences_recorded))
+    console.print(table)
+
+
 def main() -> None:
     """Entry point registered in pyproject.toml."""
     cli(obj={})

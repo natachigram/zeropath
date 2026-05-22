@@ -17,6 +17,19 @@ Public API::
     print(kg.report(protocol_name="MyProtocol"))
 """
 
+from zeropath.knowledge.contest_corpus import (
+    BaseScraper,
+    CantinaScraper,
+    Code4renaScraper,
+    ContestCorpusIngestor,
+    IngestReport,
+    ScrapeStats,
+    SherlockScraper,
+    SoloditScraper,
+    SpearbitScraper,
+    default_cache_root,
+    finding_fingerprint,
+)
 from zeropath.knowledge.feedback_loop import FeedbackLoopTracker
 from zeropath.knowledge.graphrag import (
     GraphRAGAdapter,
@@ -81,6 +94,12 @@ __all__ = [
     "GraphRAGAdapter", "GraphSummary", "LocalSummariser",
     "InMemoryKGStore", "Neo4jKGStore", "KGStore",
     "normalise_attack_class",
+    # Contest corpus (Phase 13)
+    "ContestCorpusIngestor", "BaseScraper",
+    "Code4renaScraper", "SherlockScraper", "CantinaScraper",
+    "SoloditScraper", "SpearbitScraper",
+    "IngestReport", "ScrapeStats",
+    "default_cache_root", "finding_fingerprint",
     # Schema
     "NodeLabel", "RelationshipType", "SCHEMA_QUERIES",
     # Models

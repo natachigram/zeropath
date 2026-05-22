@@ -4,7 +4,9 @@ Autonomous smart contract security research for DeFi protocols.
 
 ZeroPath builds a protocol-level model of a smart contract system, infers the
 economic invariants that should hold, generates adversarial attack hypotheses,
-and turns high-signal hypotheses into executable transaction sequences.
+and turns high-signal hypotheses into executable transaction sequences,
+validated findings, audit-contest submissions, and agent-accessible security
+research context.
 
 The project is designed around one standard:
 
@@ -42,9 +44,10 @@ more defensible issues.
 
 ## Current Status
 
-ZeroPath is under active development. The public CLI currently exposes the core
-pipeline through Phase 4, with later phases present as source modules and tests
-that are being integrated into the end-to-end workflow.
+ZeroPath is under active development. The public CLI exposes the core
+Phase 1-4 research workflow plus contest mode, MCP server integration, and
+knowledge-graph corpus ingestion. Phases 5-10 are implemented as source/API
+modules with tests and are being folded into more end-to-end command surfaces.
 
 | Area | Status | Notes |
 | --- | --- | --- |
@@ -52,10 +55,16 @@ that are being integrated into the end-to-end workflow.
 | Phase 2: invariant inference | Implemented | DeFi pattern detection, oracle mapping, invariant detectors, historical-precedent metadata, formal spec fields |
 | Phase 3: adversarial swarm | Implemented | Specialized agents, debate rounds, consensus ranking, hypothesis rejection |
 | Phase 4: transaction sequencing | Implemented | Attack-class builders, ABI encoding, gas estimates, mutation support, Foundry/Hardhat PoC generation |
-| Phase 5: simulation | In source | Anvil execution, state tracking, revert analysis, Echidna/Medusa/Halmos adapters |
-| Phase 6: validation | In source | Profit, permission, realism, severity, duplicate, and contrarian validators |
-| Phase 7: exploit evolution | In source | Population-based RL, curriculum scheduling, HITL signals, checkpointing |
-| Phase 8: knowledge graph | In source | Exploit records, incident records, inference records, in-memory and Neo4j stores |
+| Phase 5: simulation | In source/API | Anvil execution, state tracking, revert analysis, Echidna/Medusa/Halmos adapters |
+| Phase 6: validation | In source/API | Profit, permission, realism, severity, duplicate, and contrarian validators |
+| Phase 7: exploit evolution | In source/API | Population-based RL, curriculum scheduling, HITL signals, checkpointing |
+| Phase 8: knowledge graph | Implemented | Exploit records, incident records, inference records, in-memory and Neo4j stores |
+| Phase 9: audit reporting | In source/API | Markdown, HTML, PDF, JSON, SARIF, GitHub, GitLab, and JUnit report writers |
+| Phase 10: real-time monitor | In source/API | Transaction subscribers, signature matching, alert routing, incident metadata |
+| Phase 11: contest mode | Implemented | LLM reasoner, spec miner, Foundry PoC verifier, duplicate scoring, platform formatters, budget ledger |
+| Phase 12: MCP server | Implemented | stdio JSON-RPC server, tools/resources/prompts, IDE config installers |
+| Phase 13: contest corpus ingestion | Implemented | Code4rena, Sherlock, Cantina metadata, Solodit, and Spearbit ingestion into the KG |
+| Phase 14: EVMbench harness | Specified | Benchmark runner and prompt A/B harness are planned in `phases.md` |
 
 ---
 
@@ -83,7 +92,10 @@ Transaction Sequences
 Simulation + Validation
         |
         v
-Knowledge Graph + Learning Loop
+Audit Reports + Knowledge Graph + Learning Loop
+        |
+        v
+Contest Mode / MCP / Monitoring
 ```
 
 The architecture is intentionally modular. Each stage produces structured data
@@ -147,6 +159,56 @@ The sequencer converts attack hypotheses into concrete transaction plans:
 - expands candidates through mutation
 - emits Foundry and Hardhat proof-of-concept scaffolds
 
+### Contest Mode
+
+Contest mode layers LLM-assisted audit reasoning on top of the deterministic
+pipeline. It mines NatSpec, README, and docs claims, audits in-scope Solidity
+files with optional KG-backed RAG context, verifies generated Foundry PoCs when
+`forge` is available, runs a contrarian review pass, ranks findings by severity,
+confidence, and duplicate likelihood, then renders platform-specific payloads.
+
+Supported platforms:
+
+- Cantina
+- Code4rena
+- Sherlock
+- Immunefi
+- generic JSON
+
+Every external dependency degrades gracefully. Without an LLM key, spec mining,
+formatting, and deterministic stages still run. Without Foundry, PoCs remain
+template-only. Without a KG snapshot, historical context and duplicate scoring
+fall back to local heuristics.
+
+### Model Context Protocol
+
+The MCP server lets IDE-side agents call ZeroPath over stdio without adding a
+separate hosted service. It exposes tools for graph analysis, invariant
+inference, spec mining, Foundry PoC verification, KG queries, contest-pipeline
+helpers, platform formatting, and duplicate-likelihood scoring.
+
+Supported installer targets:
+
+- Claude Desktop
+- Claude Code
+- Cursor
+- Cline
+- Continue
+
+### Contest Corpus KG
+
+Contest corpus ingestion seeds the Phase 8 knowledge graph with historical audit
+findings and review metadata. The KG can then ground LLM prompts, surface
+similar precedent, and make duplicate-likelihood scoring less heuristic.
+
+Supported sources:
+
+- Code4rena reports
+- Sherlock judging reports
+- Cantina portfolio metadata
+- Solodit findings, via API key or local dump
+- Spearbit portfolio metadata
+
 ---
 
 ## Installation
@@ -206,6 +268,35 @@ zeropath sequence output/attack_report.json output/graph.json \
   -o output/sequences
 ```
 
+Run an audit-contest pipeline:
+
+```bash
+zeropath contest ./contracts \
+  --platform cantina \
+  --scope ./scope.txt \
+  --llm-budget-usd 200 \
+  --confidence-threshold 0.70 \
+  --severity-floor medium \
+  --invariants output/invariants.json \
+  --kg-dir ./kg \
+  -o output/cantina-submissions.json
+```
+
+Install the MCP server for an IDE-side agent:
+
+```bash
+zeropath mcp install --client claude-code --kg-dir ./kg
+zeropath mcp tools
+```
+
+Seed the knowledge graph with contest findings:
+
+```bash
+zeropath kg ingest --source code4rena --kg-dir ./kg --max 1000
+zeropath kg seed-all --kg-dir ./kg --max-per-source 1000
+zeropath kg summary --kg-dir ./kg
+```
+
 Or run the demo target:
 
 ```bash
@@ -224,6 +315,9 @@ zeropath sequence      Generate transaction sequences and PoC files
 zeropath diff          Compare two protocol versions
 zeropath import-graph  Import a graph JSON file into Neo4j
 zeropath query         Open an interactive Neo4j query shell
+zeropath contest       Run the contest-mode pipeline and emit submissions JSON
+zeropath mcp           Install, serve, uninstall, or inspect the MCP server
+zeropath kg            Ingest contest corpora and inspect KG summaries
 ```
 
 Supported analysis inputs:
@@ -249,6 +343,35 @@ Version-diff review:
 zeropath diff ./protocol-v1 ./protocol-v2 -o output/diff.json
 ```
 
+Contest mode:
+
+```bash
+zeropath contest ./contracts \
+  --platform code4rena \
+  --contest-name "Example Contest" \
+  --scope ./scope.txt \
+  --kg-dir ./kg \
+  -o output/submissions.json
+```
+
+MCP server commands:
+
+```bash
+zeropath mcp install --client all --kg-dir ./kg
+zeropath mcp serve --kg-dir ./kg
+zeropath mcp tools
+zeropath mcp uninstall --client cursor
+```
+
+Knowledge graph corpus commands:
+
+```bash
+zeropath kg ingest --source sherlock --kg-dir ./kg
+zeropath kg ingest --source solodit --kg-dir ./kg --solodit-dump ./solodit.json
+zeropath kg seed-all --kg-dir ./kg --skip cantina
+zeropath kg summary --kg-dir ./kg
+```
+
 ---
 
 ## Python API
@@ -258,6 +381,7 @@ from pathlib import Path
 
 from zeropath import ProtocolGraphBuilder
 from zeropath.adversarial import SwarmOrchestrator
+from zeropath.contest import ContestConfig, ContestOrchestrator, ContestPlatform
 from zeropath.invariants import InvariantInferenceEngine
 from zeropath.sequencer import SequenceOrchestrator, TestFramework
 
@@ -278,14 +402,24 @@ sequence_report = SequenceOrchestrator(
     frameworks=TestFramework.BOTH,
     min_confidence=0.40,
 ).run(swarm_report, graph)
+
+contest_report = ContestOrchestrator(
+    ContestConfig(
+        platform=ContestPlatform.CANTINA,
+        repo_path="./contracts",
+        llm_budget_usd=200.0,
+        submit_confidence_threshold=0.70,
+    )
+).run()
 ```
 
 ---
 
 ## Configuration
 
-Configuration is loaded with Pydantic settings. Environment variables use the
-`ZEROPATH_` prefix.
+Core configuration is loaded with Pydantic settings. ZeroPath-owned environment
+variables use the `ZEROPATH_` prefix; vendor integrations use their standard
+provider variable names.
 
 Common settings:
 
@@ -304,6 +438,26 @@ For private GitHub repositories:
 
 ```bash
 export ZEROPATH_GITHUB_TOKEN=<token>
+```
+
+For direct LLM contest runs:
+
+```bash
+export ANTHROPIC_API_KEY=<api-key>
+export OPENAI_API_KEY=<api-key>
+export ZEROPATH_LLM_LOCAL_BASE_URL=http://localhost:11434
+```
+
+Only the provider you want to use needs to be configured, and direct LLM
+support depends on the corresponding vendor SDK being installed in the active
+environment.
+
+For Solodit corpus ingestion:
+
+```bash
+export SOLODIT_API_KEY=<api-key>
+# or
+export CYFRIN_API_KEY=<api-key>
 ```
 
 ---
@@ -327,6 +481,11 @@ src/zeropath/
   validation/               Phase 6 false-positive rejection pipeline
   rl/                       Phase 7 swarm RL and curriculum training
   knowledge/                Phase 8 exploit knowledge graph
+  reporting/                Phase 9 audit report generation and CI formats
+  monitor/                  Phase 10 transaction monitoring and alerts
+  contest/                  Phase 11 contest orchestration and formatters
+  llm/                      LLM providers, prompts, audit reasoner, KG RAG
+  mcp_server/               Phase 12 stdio MCP server and IDE installers
 tests/                      Unit and integration tests by phase
 example_contracts/          Small Solidity fixtures for local runs
 phases.md                   Full research and implementation specification
@@ -352,6 +511,7 @@ The test suite is organized by subsystem and phase:
 - adversarial agents, debate, consensus, and full Phase 3 pipeline
 - transaction sequencing, ABI encoding, gas estimation, mutation, and codegen
 - simulator, validation, RL, and knowledge graph modules
+- reporting, monitoring, contest mode, MCP server, and contest corpus ingestion
 
 ---
 

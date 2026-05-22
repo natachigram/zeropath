@@ -922,3 +922,356 @@ The swarm intelligence insight (from MiroFish's architecture) changes Phase 3 an
 Phase 7 from "one model thinking hard" to "many specialized agents finding what
 one model can't see." That is the architectural difference between a good tool and
 a system that discovers vulnerabilities no human would think to look for.
+
+---
+
+## PHASE 11: LLM-Augmented Contest Mode (Audit-Contest Winning)
+
+### Goal
+
+Turn ZeroPath into a system that can take top-5 in audit contests
+(Cantina, Code4rena, Sherlock, Immunefi). The deterministic 10-phase
+pipeline is excellent SaaS infrastructure — but contest combat needs
+LLM-class reasoning over Solidity semantics + spec/implementation gap
+detection + verified PoCs + platform-specific submission shaping +
+duplicate-likelihood ranking.
+
+### What you are building
+
+- LLM provider abstraction (Anthropic Claude Opus, OpenAI GPT/o1, local Llama — pluggable)
+- LLM Reasoner agent with tool use (read_file, grep_codebase, lookup_past_finding)
+- Audit corpus RAG layer (Phase 8 KG → context blocks for the reasoner)
+- Spec miner (NatSpec + README + docs → claimed invariants)
+- Spec/implementation mismatch detector
+- Foundry PoC verifier (forge build + forge test, repair-on-failure loop)
+- LLM contrarian pass (judge-style reject pass on every finding)
+- Submission strategy (confidence gate + severity floor + duplicate-likelihood ranking)
+- Platform formatters (Cantina, Code4rena, Sherlock, Immunefi schemas)
+- Contest orchestrator (parallel per-file audit + cost-budget enforcement)
+- Cost ledger with hard budget enforcement (--llm-budget-usd)
+
+### Critical additions vs. the Phase 1-10 pipeline
+
+**LLM Reasoner with tool use:**
+The Phase 3 adversarial swarm is pattern-based deduction. ~50% of
+contest-winning HIGH/CRITICAL findings require semantic reasoning over
+protocol intent — "the code does X but the comment says Y, therefore Z
+is broken." Without an LLM in the loop, ZeroPath misses those. The
+Reasoner sits ALONGSIDE the swarm (not replacing it) and produces
+findings the deterministic detectors can't.
+
+**Spec/impl gap detection:**
+The single highest-payoff bug class in audit contests is the gap between
+NatSpec/README claims and actual code behaviour. The Spec Miner extracts
+every "MUST", "SHALL", "always", "never" claim from NatSpec + README +
+docs, then the Mismatch Detector flags any claim not enforced by a
+Phase 2 invariant. These become first-class candidate findings.
+
+**Verified PoCs — not template PoCs:**
+Phase 9's report generator produces .t.sol files. Contest judges reject
+findings whose PoC doesn't actually run. The Foundry PoC Verifier:
+  - Compiles the generated test in a scratch or contest-supplied workspace
+  - Runs `forge test --match-path` with the expected assertion
+  - Captures compile + revert errors for the LLM to repair and retry
+  - Downgrades confidence on findings whose PoC won't run
+
+**Duplicate-likelihood scoring:**
+Contests pay less for findings other auditors also submit. The strategy
+module estimates per-finding duplicate likelihood (per-class baseline +
+KG-weighted boost + novelty discount + spec-violation discount) and
+submits low-dup findings first.
+
+**Per-platform submission formatting:**
+Cantina, Code4rena, Sherlock, Immunefi each have their own submission
+shapes (JSON, Markdown with severity codes, impact × likelihood matrix,
+etc.). One platform-agnostic Finding model, four adapters.
+
+**Cost ledger:**
+LLM calls add up fast on a 50-file contest. The ledger caps spend at
+``--llm-budget-usd 200`` and short-circuits the audit loop when the
+budget is hit, so a runaway prompt can't drain a credit card.
+
+### Output (ContestReport)
+
+```json
+{
+  "config": {"platform": "cantina", "repo_path": "./contracts", ...},
+  "submissions": [
+    {
+      "rank": 1,
+      "disposition": "submit_now",
+      "finding": {
+        "title": "Single-block oracle manipulation in LendingPool.borrow()",
+        "severity": "critical",
+        "attack_class": "oracle_manipulation",
+        "contracts_involved": ["LendingPool"],
+        "lines_of_code": ["src/LendingPool.sol#L42-L60"],
+        "description": "...",
+        "impact": "...",
+        "attack_path": ["1. flash-loan WETH...", "2. swap to skew...", ...],
+        "proof_of_concept_code": "// .t.sol that compiles + asserts profit",
+        "proof_of_concept_run_log": "[PASS] test_oracleManipulation() ...",
+        "recommendation": "Replace spot price with TWAP (≥30 min window)",
+        "confidence": 0.85,
+        "duplicate_likelihood": 0.32,
+        "historical_precedents": [
+          {"protocol": "Cream Finance", "loss_usd": 130000000, ...}
+        ]
+      },
+      "rendered_payload": { ... platform-specific JSON ... }
+    }
+  ],
+  "summary": {
+    "files_scanned": 32, "raw_findings": 24,
+    "actionable_findings": 11, "submitted_count": 8, "discarded_count": 3,
+    "by_severity": {"critical": 2, "high": 5, "medium": 3, "low": 1},
+    "llm_spent_usd": 47.23, "llm_calls": 89, "elapsed_seconds": 412.6
+  }
+}
+```
+
+### CLI surface
+
+```bash
+zeropath contest ./contracts \
+    --platform cantina \
+    --scope ./scope.txt \
+    --llm-budget-usd 200 \
+    --confidence-threshold 0.70 \
+    --severity-floor medium \
+    --invariants output/invariants.json \
+    --kg-dir ./kg/ \
+    -o output/cantina-submissions.json
+```
+
+### Pipeline
+
+```
+spec mine  ───►  parallel per-file LLM audit (Claude Opus + KG-RAG + tools)
+                          │
+                          ▼
+                Foundry compile + test the PoC
+                          │
+                          ▼
+              LLM contrarian — would a judge reject this?
+                          │
+                          ▼
+              Strategy: confidence + severity gate, dup-likelihood rank
+                          │
+                          ▼
+           Platform formatter (Cantina / C4R / Sherlock / Immunefi)
+                          │
+                          ▼
+                 submissions.json ready to submit
+```
+
+### Graceful degradation
+
+Every external dependency is optional:
+
+  - No `ANTHROPIC_API_KEY` / no `openai` pkg → spec miner runs, mismatch detector flags gaps, formatters work; LLM audit skipped
+  - No `forge` on PATH → pipeline runs; PoCs template-only, not verified
+  - No Phase 8 KG dir → no historical-precedent RAG context
+  - No Phase 2 invariants → LLM audit runs with less context
+
+---
+
+## PHASE 12: MCP Server (IDE-Side Distribution)
+
+### Goal
+
+Let any IDE-side AI agent (Claude Code, Cursor, Cline, Continue.dev,
+Claude Desktop, Zed, Windsurf) drive ZeroPath without the user having
+to set up an API key. The IDE's existing LLM subscription does the
+reasoning; ZeroPath exposes its capabilities as Model Context Protocol
+tools / resources / prompts.
+
+### What you are building
+
+- Pure-stdlib JSON-RPC 2.0 implementation over newline-delimited stdio
+- MCPServer dispatcher (initialize, tools/list+call, resources/list+read+templates, prompts/list+get)
+- 12 tools wrapping Phase 1-10 + contest mode + KG queries
+- 6 resources + 2 URI templates exposing graph / invariants / KG / contest reports
+- 4 pre-built prompts (contest_audit, spec_extract, contrarian_review, kg_ground_attack_class)
+- IDE auto-installer for 5 clients (Claude Desktop, Claude Code, Cursor, Cline, Continue) with idempotent merge + auto-backup
+- `zeropath mcp` CLI group: install / uninstall / serve / tools
+
+### Critical additions vs. running CLI directly
+
+**Zero-credential workflow:**
+User runs `zeropath mcp install --client claude-code`, restarts IDE,
+and the agent now has 12 ZeroPath tools available. No API key setup,
+no separate subscription, no env vars. The IDE's existing LLM
+(Claude Opus / GPT-5 / whichever the user pays for) handles reasoning.
+
+**Conversational steering:**
+With the MCP server, the user can say "audit this contract but focus on
+the lending pool — skip the test files" mid-conversation. Direct-API
+calls don't support that; MCP does.
+
+**Statefulness:**
+The MCP server holds the loaded protocol graph, invariant report, and
+last contest report in memory across tool calls. Skill-based
+distribution reloads from disk every invocation.
+
+**Typed tool schemas:**
+Every tool exposes a JSON Schema so the IDE agent always knows the
+exact signature. No prose interpretation required.
+
+### Pure-stdlib protocol implementation
+
+To keep install footprint minimal and survive any IDE's invocation
+pattern, the MCP protocol is implemented from scratch in pure Python.
+No `mcp` SDK dependency, no native extensions. ~250 LOC for the
+protocol + server + transport.
+
+### Tools exposed
+
+  - `analyze_protocol`  — Phase 1 graph builder
+  - `infer_invariants`  — Phase 2 detector pipeline
+  - `mine_spec_claims`  — Spec miner
+  - `verify_foundry_poc`  — Compile + run a .t.sol PoC
+  - `query_kg_similar_exploits`  — Phase 8 similarity
+  - `query_kg_historical_grounding`  — KG → confidence boost + matched incidents
+  - `ingest_threat_intel`  — Manual KG ingest
+  - `ingest_defihacklabs_live`  — Live KG fetch from GitHub
+  - `kg_summary`  — KG stats
+  - `run_contest_pipeline`  — Deterministic contest pipeline (LLM disabled — IDE supplies reasoning)
+  - `format_finding_for_platform`  — Cantina/C4R/Sherlock/Immunefi adapter
+  - `estimate_duplicate_likelihood`  — Submission strategy scoring
+
+### Resources exposed
+
+  - `zeropath://kg/summary` — top-level KG stats
+  - `zeropath://kg/findings` — validated-exploits index
+  - `zeropath://kg/incidents` — historical-incidents index
+  - `zeropath://kg/findings/{id}` — one validated exploit by id (template)
+  - `zeropath://kg/incidents/{id}` — one historical incident (template)
+  - `zeropath://contest/last-report` — most recent ContestReport
+  - `zeropath://graph/latest` — most recent ProtocolGraph
+  - `zeropath://invariants/latest` — most recent InvariantReport
+
+### Prompts exposed
+
+  - `contest_audit` — runs the full contest workflow
+  - `spec_extract` — runs spec mining + manual mismatch check
+  - `contrarian_review` — judge-style rejection pass on a finding
+  - `kg_ground_attack_class` — surface historical precedents for an attack class
+
+### Distribution architecture
+
+```
+                ┌──────────────────────────────────────────────────┐
+                │ ZeroPath core (Phase 1-10 + contest + KG)        │
+                └──────────────────┬──────────────────────────┬───┘
+                                   │                          │
+                  ┌────────────────┴───────┐   ┌──────────────┴──────┐
+                  │ MCP server (stdio)     │   │ Direct CLI / API    │
+                  │ (Phase 12)             │   │ + contest mode      │
+                  └────────────────┬───────┘   └─────────────────────┘
+                                   │
+                  ┌────────────────┴───────────────────────────┐
+                  ▼                                              ▼
+            IDE-side agents                          CI/CD pipelines
+            (Claude Code, Cursor, Cline,           GitHub Actions
+             Continue, Claude Desktop,              Pre-commit
+             Zed, Windsurf, ChatGPT Desktop)        Headless batch
+```
+
+---
+
+## PHASE 13: Contest Corpus Ingestion (Next)
+
+### Goal
+
+Seed the Phase 8 knowledge graph with ~35,000+ historical contest
+findings so the LLM Reasoner's RAG context (Phase 11) and the
+duplicate-likelihood scoring become real signal instead of class-baseline
+heuristics.
+
+### What you are building
+
+- Code4rena report scraper (github.com/code4rena/reports) — ~3,000 findings
+- Sherlock report scraper (github.com/sherlock-protocol/reports) — ~2,000 findings
+- Cantina disclosure scraper (cantina.xyz/competitions) — ~1,500 findings
+- Solodit ingester (solodit.cyfrin.io) — ~30,000 curated findings
+- Spearbit report scraper (spearbit.com/reports) — ~500 findings
+- Unified `zeropath kg ingest --source X` CLI command
+- `zeropath kg seed-all` one-shot bootstrap
+- Local cache so re-running doesn't re-fetch
+- Idempotent KG inserts (fingerprint-based dedup)
+
+### Critical design notes
+
+**HTTP-only, no API keys:**
+Code4rena + Sherlock are GitHub repos — `git clone` or raw-file fetch
+works without auth. Cantina disclosures are public HTML pages. Solodit
+has a public search interface. The corpus loader needs zero
+credentials to bootstrap.
+
+**Reuse `ExternalIncidentRecord`:**
+Contest findings fit the same schema as DeFiHackLabs / Rekt entries —
+just with `source ∈ {code4rena, sherlock, cantina, solodit, spearbit}`,
+`loss_usd=0` (no actual loss for audit findings), and `tags` carrying
+severity codes ("severity:H", "contest:cantina-aave-v3").
+
+**Cache locally:**
+~/.zeropath/cache/ holds the cloned repos + parsed HTML so re-running
+costs near-zero network. Each scraper checks cache mtime against
+"last ingested at" to skip unchanged files.
+
+**Idempotent KG inserts:**
+Fingerprint each finding on (source, contest_id, finding_title) so
+re-running `seed-all` updates rather than duplicates. Phase 6
+DuplicateDetector's fingerprint protocol already supports this.
+
+### CLI surface
+
+```bash
+zeropath kg ingest --source code4rena --kg-dir ./kg
+zeropath kg ingest --source sherlock --kg-dir ./kg
+zeropath kg ingest --source cantina --kg-dir ./kg
+zeropath kg ingest --source solodit --kg-dir ./kg --limit 5000
+
+# One-shot bootstrap of every source:
+zeropath kg seed-all --kg-dir ./kg
+```
+
+### Expected outcome
+
+After `seed-all` completes:
+
+  - LLM Reasoner's `lookup_past_finding` tool returns 5-10 structurally similar past contest findings per file
+  - `estimate_duplicate_likelihood` becomes distribution-driven instead of baseline-heuristic
+  - `query_kg_historical_grounding` surfaces relevant incidents for every common attack class
+  - Phase 3 swarm gets the historical-precedent boost the spec already calls for
+  - The KG becomes the moat — every contest run gets smarter than the last
+
+This is the highest-leverage move for contest competitiveness because the
+LLM Reasoner is only as good as the context it's grounded in.
+
+---
+
+## PHASE 14: EVMbench Harness (Measurement)
+
+### Goal
+
+Measure ZeroPath's contest performance against the OpenAI + Paradigm
+EVMbench benchmark (Feb 2026 — 120 curated vulnerabilities from 40
+professional audits). Without a public scoreboard, "is ZeroPath
+beating V12?" is unanswerable.
+
+### What you are building
+
+- EVMbench downloader / cloner
+- Per-item runner (runs full contest mode against one bench fixture)
+- Recall / precision / mean-time-to-find metrics
+- A/B harness for prompt versions (`PROMPT_VERSION` in llm/prompts.py)
+- Baseline comparison report (ZeroPath vs ZeroPath+ContestMode vs
+  ZeroPath+Phase13-KG)
+
+### Target outcome
+
+ZeroPath's published EVMbench score >= V12's published score on the
+same benchmark version. Optimise prompt + thresholds until this holds.
+This is the bar for "we are competitive in audit contests."
