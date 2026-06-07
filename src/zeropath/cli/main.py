@@ -1552,6 +1552,38 @@ def zp_candidates_evidence(
     console.print(table)
 
 
+@zp_candidates.command("plan")
+@click.argument("candidate_id")
+@click.option("--repo", type=click.Path(file_okay=False, path_type=Path), default=Path("."), show_default=True)
+def zp_candidates_plan(candidate_id: str, repo: Path) -> None:
+    """Build and save a proof-state plan for a candidate."""
+    from zeropath.core.state_plan import build_candidate_state_plan
+    from zeropath.core.storage import Storage
+
+    try:
+        plan = build_candidate_state_plan(Storage(repo), candidate_id)
+    except Exception as exc:
+        console.print(f"[red]State plan failed:[/red] {exc}")
+        raise click.Exit(1)
+
+    table = Table(title=f"State plan: {plan.candidate_id}", show_header=True)
+    table.add_column("Field"); table.add_column("Value")
+    table.add_row("confidence", plan.confidence)
+    table.add_row("setup_steps", str(len(plan.setup_steps)))
+    table.add_row("transaction_steps", str(len(plan.transaction_steps)))
+    table.add_row("missing_dependencies", str(len(plan.missing_dependencies)))
+    table.add_row("evidence_to_collect", str(len(plan.evidence_to_collect)))
+    table.add_row("artifact", plan.artifact_path or "not saved")
+    console.print(table)
+
+    console.print("[bold]Setup steps[/bold]")
+    for step in plan.setup_steps:
+        console.print(f"- {step}")
+    console.print("[bold]Missing dependencies[/bold]")
+    for item in plan.missing_dependencies or ["None"]:
+        console.print(f"- {item}")
+
+
 @cli.command("prove")
 @click.argument("candidate_id")
 @click.option("--repo", type=click.Path(file_okay=False, path_type=Path), default=Path("."), show_default=True)

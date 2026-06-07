@@ -598,6 +598,52 @@ class TestEvidenceMcpSecurity:
         assert candidate.known_issue_risk == "none"
         assert "mcp triage" in candidate.evidence.notes
 
+    def test_build_state_plan_is_read_only_without_write_mode(self, tmp_path):
+        storage = Storage(tmp_path)
+        storage.initialize(ProjectConfig(project_id="demo", root_path=str(tmp_path), adapter="evm"))
+        storage.save_candidate(
+            CandidateFinding(
+                id="ZP-015",
+                project_id="demo",
+                title="MCP plan target",
+                required_state=["oracle stale"],
+                transaction_sequence=["borrow"],
+                impact=Impact(impact_type="bad_debt", funds_at_risk=True, explanation="demo"),
+            )
+        )
+        server = build_default_server(workspace_root=tmp_path)
+
+        result = server.tools["zeropath_build_state_plan"].handler(
+            {"repo_path": str(tmp_path), "candidate_id": "ZP-015"}
+        )
+
+        assert result["ok"] is True
+        assert result["state_plan"]["artifact_path"] is None
+        assert storage.load_record("state_plan", "ZP-015") is None
+
+    def test_build_state_plan_persists_with_write_mode(self, tmp_path):
+        storage = Storage(tmp_path)
+        storage.initialize(ProjectConfig(project_id="demo", root_path=str(tmp_path), adapter="evm"))
+        storage.save_candidate(
+            CandidateFinding(
+                id="ZP-016",
+                project_id="demo",
+                title="MCP persisted plan target",
+                required_state=["vault seeded"],
+                transaction_sequence=["redeem"],
+                impact=Impact(impact_type="direct_theft", funds_at_risk=True, explanation="demo"),
+            )
+        )
+        server = build_default_server(workspace_root=tmp_path)
+
+        result = server.tools["zeropath_build_state_plan"].handler(
+            {"repo_path": str(tmp_path), "candidate_id": "ZP-016", "write_mode": True}
+        )
+
+        assert result["ok"] is True
+        assert result["state_plan"]["artifact_path"]
+        assert storage.load_record("state_plan", "ZP-016")["candidate_id"] == "ZP-016"
+
 
 class TestIngestThreatIntelTool:
     def test_ingests_into_in_memory_kg(self):

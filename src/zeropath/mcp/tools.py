@@ -293,16 +293,24 @@ def _build_state_plan(state: EvidenceMCPState) -> Tool:
     def handler(args: dict[str, Any]) -> dict[str, Any]:
         repo = state.repo(args)
         log_tool_call(repo, "zeropath_build_state_plan", args)
-        candidate = _storage(repo).load_candidate(args["candidate_id"])
-        if not candidate:
-            return _err("candidate not found")
-        return _ok(
-            required_state=candidate.required_state,
-            setup_steps=[f"Create evidence for: {item}" for item in candidate.required_state],
-            missing_dependencies=["protocol deployment/config", "funded actors", "oracle/state fixture"],
-        )
+        try:
+            from zeropath.core.state_plan import build_candidate_state_plan
 
-    return Tool("zeropath_build_state_plan", "Return required state, setup steps, and missing dependencies for a candidate.", object_schema({"repo_path": {"type": "string"}, "candidate_id": {"type": "string"}}, ["candidate_id"]), handler)
+            plan = build_candidate_state_plan(
+                _storage(repo),
+                args["candidate_id"],
+                persist=require_write(args),
+            )
+            return _ok(state_plan=plan.model_dump(mode="json"))
+        except Exception as exc:
+            return _err(str(exc))
+
+    return Tool(
+        "zeropath_build_state_plan",
+        "Return required state, setup steps, and missing dependencies for a candidate. Persists only with write_mode=true.",
+        object_schema({"repo_path": {"type": "string"}, "candidate_id": {"type": "string"}, **WRITE_MODE}, ["candidate_id"]),
+        handler,
+    )
 
 
 def _generate_foundry_poc(state: EvidenceMCPState) -> Tool:

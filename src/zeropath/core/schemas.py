@@ -185,6 +185,22 @@ class JudgeResult(CoreModel):
     explanation: str = ""
 
 
+class CandidateStatePlan(CoreModel):
+    candidate_id: str
+    project_id: str
+    title: str
+    required_state: list[str] = Field(default_factory=list)
+    setup_steps: list[str] = Field(default_factory=list)
+    transaction_steps: list[str] = Field(default_factory=list)
+    missing_dependencies: list[str] = Field(default_factory=list)
+    evidence_to_collect: list[str] = Field(default_factory=list)
+    suggested_fixtures: list[str] = Field(default_factory=list)
+    confidence: str = "inferred"
+    notes: list[str] = Field(default_factory=list)
+    artifact_path: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 class MemoryItem(CoreModel):
     id: str
     memory_type: str

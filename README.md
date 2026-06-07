@@ -119,6 +119,12 @@ zeropath candidates evidence ZP-001 \
   --live-config-checked
 ```
 
+Build a proof-state plan:
+
+```bash
+zeropath candidates plan ZP-001
+```
+
 Generate a proof skeleton and run Foundry if available:
 
 ```bash
@@ -161,6 +167,7 @@ Important MCP tools include:
 - `zeropath_get_protocol_intent`
 - `zeropath_generate_attack_hypotheses`
 - `zeropath_update_candidate_evidence`
+- `zeropath_build_state_plan`
 - `zeropath_generate_foundry_poc`
 - `zeropath_run_poc`
 - `zeropath_judge_candidate`

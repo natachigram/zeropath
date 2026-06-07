@@ -118,6 +118,30 @@ def test_candidates_evidence_command_updates_candidate(tmp_path):
     assert "manual triage complete" in updated.evidence.notes
 
 
+def test_candidates_plan_command_writes_state_plan(tmp_path):
+    storage = Storage(tmp_path)
+    storage.initialize(ProjectConfig(project_id="demo", root_path=str(tmp_path), adapter="evm"))
+    storage.save_candidate(
+        CandidateFinding(
+            id="ZP-014",
+            project_id="demo",
+            title="Plan target",
+            attacker_model="Untrusted depositor",
+            required_state=["vault seeded"],
+            transaction_sequence=["deposit", "redeem"],
+            impact=Impact(impact_type="direct_theft", funds_at_risk=True, explanation="demo"),
+        )
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["candidates", "plan", "ZP-014", "--repo", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    assert "State plan" in result.output
+    assert storage.load_candidate("ZP-014").status == "state_planned"
+    assert storage.load_record("state_plan", "ZP-014")["candidate_id"] == "ZP-014"
+
+
 def test_cli_package_layout_exports_evidence_commands():
     from zeropath.cli import cli as package_cli
     from zeropath.cli import main as package_main
