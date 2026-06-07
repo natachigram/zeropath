@@ -31,6 +31,9 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+if not hasattr(click, "Exit"):
+    click.Exit = click.exceptions.Exit
+
 from zeropath.config import Settings
 from zeropath.exceptions import GitHubIngestionError, ZeropathError
 from zeropath.logging_config import configure_logging, get_logger

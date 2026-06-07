@@ -61,3 +61,4 @@ def test_report_command_refuses_final_without_judge(tmp_path):
 
     assert result.exit_code == 1
     assert "Report refused" in result.output
+    assert "Traceback" not in result.output
