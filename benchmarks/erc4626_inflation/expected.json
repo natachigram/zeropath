@@ -1,0 +1,14 @@
+{
+  "id": "erc4626_inflation",
+  "name": "ERC4626 share inflation",
+  "ecosystem": "evm",
+  "adapter": "evm",
+  "protocol_type": "vault",
+  "bug_class": "erc4626_share_inflation",
+  "expected_invariant": "share price must not be profitably manipulable",
+  "expected_sequence": ["seed vault", "skew assets/shares", "victim deposit", "attacker redeem"],
+  "should_find": true,
+  "should_reject": false,
+  "difficulty": "medium",
+  "notes": "Skeleton only; add vulnerable and patched contracts later."
+}

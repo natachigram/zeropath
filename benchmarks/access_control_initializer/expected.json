@@ -1,0 +1,14 @@
+{
+  "id": "access_control_initializer",
+  "name": "Access control initializer",
+  "ecosystem": "evm",
+  "adapter": "evm",
+  "protocol_type": "unknown",
+  "bug_class": "access_control_initializer",
+  "expected_invariant": "value-sensitive authority must not be acquirable by untrusted initialization",
+  "expected_sequence": ["call initializer", "gain authority", "execute fund-impacting action"],
+  "should_find": true,
+  "should_reject": false,
+  "difficulty": "low",
+  "notes": "Should be rejected unless deployment reachability is proven."
+}

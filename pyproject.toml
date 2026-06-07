@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "zeropath"
 version = "0.2.0"
-description = "Autonomous smart contract security research system — Phase 1: Protocol Ingestion + Graph Builder"
+description = "Evidence-first smart contract security research engine"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "ZeroPath Security Research" }]
@@ -51,7 +51,12 @@ package-dir = { "" = "src" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-zeropath = ["py.typed"]
+zeropath = [
+    "py.typed",
+    "templates/agent/*",
+    "templates/reports/*",
+    "templates/pocs/*",
+]
 
 # ---------------------------------------------------------------------------
 # Formatter

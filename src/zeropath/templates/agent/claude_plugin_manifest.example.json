@@ -1,0 +1,10 @@
+{
+  "name": "zeropath",
+  "description": "Local evidence-first smart contract security research engine.",
+  "version": "0.1.0",
+  "mcp": {
+    "command": "python",
+    "args": ["-m", "zeropath.cli", "mcp"]
+  },
+  "notes": "Scaffold only. Configure paths for your local environment."
+}

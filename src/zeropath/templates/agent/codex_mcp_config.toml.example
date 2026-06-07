@@ -1,0 +1,6 @@
+# Example Codex MCP config for a local ZeroPath checkout.
+
+[mcp_servers.zeropath]
+command = "python"
+args = ["-m", "zeropath.cli", "mcp"]
+cwd = "/absolute/path/to/protocol/workspace"

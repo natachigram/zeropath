@@ -1,0 +1,14 @@
+{
+  "id": "oracle_stale_price",
+  "name": "Oracle stale price",
+  "ecosystem": "evm",
+  "adapter": "evm",
+  "protocol_type": "oracle",
+  "bug_class": "oracle_stale_or_manipulated_price",
+  "expected_invariant": "prices must be fresh and bounded before value-sensitive use",
+  "expected_sequence": ["prepare stale oracle state", "call value-sensitive entrypoint", "measure mispricing impact"],
+  "should_find": true,
+  "should_reject": false,
+  "difficulty": "medium",
+  "notes": "Skeleton only; add concrete oracle fixture later."
+}

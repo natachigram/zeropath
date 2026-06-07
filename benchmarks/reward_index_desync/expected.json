@@ -1,0 +1,14 @@
+{
+  "id": "reward_index_desync",
+  "name": "Reward index desync",
+  "ecosystem": "evm",
+  "adapter": "evm",
+  "protocol_type": "staking/rewards",
+  "bug_class": "reward_index_desync",
+  "expected_invariant": "reward indexes must stay synchronized with balance changes",
+  "expected_sequence": ["accrue rewards", "change balance through unsynced path", "claim excess rewards"],
+  "should_find": true,
+  "should_reject": false,
+  "difficulty": "medium",
+  "notes": "Skeleton only; add concrete contracts later."
+}
