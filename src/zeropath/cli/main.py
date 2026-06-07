@@ -1708,9 +1708,9 @@ def _copy_agent_templates(storage) -> None:
 def mcp(ctx: click.Context) -> None:
     """Run ZeroPath as an MCP server / install it into your IDE."""
     if ctx.invoked_subcommand is None:
-        from zeropath.mcp.server import serve_stdio
+        from zeropath.mcp_server import build_default_server
 
-        serve_stdio(Path("."))
+        build_default_server(workspace_root=Path(".")).serve_forever()
 
 
 @mcp.command("serve")
@@ -1725,7 +1725,7 @@ def mcp_serve(ctx: click.Context, kg_dir: Optional[Path]) -> None:
     """Run the MCP server over stdio (invoked by your IDE, not directly)."""
     from zeropath.mcp_server import build_default_server
 
-    server = build_default_server(kg_dir=kg_dir)
+    server = build_default_server(kg_dir=kg_dir, workspace_root=Path("."))
     server.serve_forever()
 
 
@@ -1826,7 +1826,7 @@ def mcp_tools(ctx: click.Context) -> None:
     """List every tool / resource / prompt exposed by the MCP server."""
     from zeropath.mcp_server import build_default_server
 
-    server = build_default_server()
+    server = build_default_server(workspace_root=Path("."))
     console = Console()
 
     table = Table(title="MCP tools", show_header=True)

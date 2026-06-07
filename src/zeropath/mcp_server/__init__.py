@@ -73,12 +73,19 @@ def build_default_server(
     transport : StdioTransport | None
         Override the I/O transport (used by tests).
     """
+    workspace = workspace_root or Path.cwd()
     state = ServerState(
         kg_dir=kg_dir,
-        workspace_root=workspace_root or Path.cwd(),
+        workspace_root=workspace,
     )
     server = MCPServer(transport=transport)
     register_default_tools(server, state)
+    from zeropath.mcp.tools import EvidenceMCPState, register_evidence_tools
+
+    register_evidence_tools(
+        server,
+        EvidenceMCPState(workspace_root=workspace.resolve()),
+    )
     register_default_resources(server, state)
     register_default_prompts(server)
     return server

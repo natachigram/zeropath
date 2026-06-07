@@ -8,22 +8,33 @@ from pathlib import Path
 from typing import Any
 
 
-SECRET_PATTERNS = (
-    re.compile(r"(?i)(api[_-]?key|token|secret|password)\s*[:=]\s*['\"]?[^'\"\s,}]+"),
-    re.compile(r"0x[a-fA-F0-9]{64}"),
+SECRET_KEY_RE = re.compile(r"(?i)(api[_-]?key|token|secret|password|private[_-]?key)")
+SECRET_ASSIGNMENT_RE = re.compile(
+    r"(?i)\b(api[_-]?key|token|secret|password|private[_-]?key)\b\s*[:=]\s*['\"]?[^'\"\s,}]+"
 )
+HEX_SECRET_RE = re.compile(r"0x[a-fA-F0-9]{64}")
 
 
 def redact(value: Any) -> Any:
-    text = json.dumps(value, default=str) if not isinstance(value, str) else value
-    for pattern in SECRET_PATTERNS:
-        text = pattern.sub(lambda m: m.group(0).split("=")[0] + "=<redacted>" if "=" in m.group(0) else "<redacted>", text)
     if isinstance(value, str):
-        return text
-    try:
-        return json.loads(text)
-    except Exception:
-        return text
+        text = SECRET_ASSIGNMENT_RE.sub(lambda m: f"{m.group(1)}=<redacted>", value)
+        return HEX_SECRET_RE.sub("<redacted>", text)
+    if isinstance(value, dict):
+        redacted: dict[Any, Any] = {}
+        for key, item in value.items():
+            if SECRET_KEY_RE.search(str(key)):
+                redacted[key] = "<redacted>"
+            else:
+                redacted[key] = redact(item)
+        return redacted
+    if isinstance(value, list):
+        return [redact(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redact(item) for item in value)
+    text = json.dumps(value, default=str)
+    if HEX_SECRET_RE.search(text):
+        return HEX_SECRET_RE.sub("<redacted>", text)
+    return value
 
 
 def workspace_path(path: str | Path, workspace_root: str | Path) -> Path:

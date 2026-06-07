@@ -48,6 +48,7 @@ from zeropath.mcp_server import (
     serialize,
     uninstall_for_client,
 )
+from zeropath.mcp.permissions import log_tool_call, redact, workspace_path
 from zeropath.mcp_server.server import _match_template, _coerce_tool_content
 
 
@@ -459,6 +460,19 @@ class TestBuildDefaultServer:
         ):
             assert tool_name in server.tools, f"missing tool: {tool_name}"
 
+    def test_includes_evidence_first_tools_for_installed_servers(self):
+        server = build_default_server()
+        for tool_name in (
+            "zeropath_project_status",
+            "zeropath_ingest_repo",
+            "zeropath_generate_attack_hypotheses",
+            "zeropath_generate_foundry_poc",
+            "zeropath_judge_candidate",
+            "zeropath_export_report",
+            "zeropath_memory_search",
+        ):
+            assert tool_name in server.tools, f"missing evidence tool: {tool_name}"
+
     def test_includes_expected_resources(self):
         server = build_default_server()
         uris = set(server.resources.keys())
@@ -490,6 +504,54 @@ class TestSpecMineTool:
         result = tool.handler({"repo_path": str(tmp_path)})
         assert result["ok"] is True
         assert result["claimed_invariants"]
+
+
+class TestEvidenceMcpSecurity:
+    def test_write_tools_require_explicit_write_mode(self, tmp_path):
+        server = build_default_server(workspace_root=tmp_path)
+        result = server.tools["zeropath_ingest_repo"].handler({"repo_path": str(tmp_path)})
+        assert result["ok"] is False
+        assert "write_mode=true" in result["error"]
+
+    def test_workspace_path_rejects_outside_workspace(self, tmp_path):
+        root = tmp_path / "workspace"
+        root.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        with pytest.raises(PermissionError):
+            workspace_path(outside, root)
+
+    def test_log_tool_call_redacts_nested_secrets(self, tmp_path):
+        (tmp_path / ".zeropath" / "logs").mkdir(parents=True)
+        secret_hex = "0x" + "a" * 64
+
+        log_tool_call(
+            tmp_path,
+            "zeropath_project_status",
+            {
+                "api_key": "abc123",
+                "nested": {"token": secret_hex},
+                "message": "password=supersecret",
+            },
+        )
+
+        text = (tmp_path / ".zeropath" / "logs" / "mcp.log").read_text()
+        assert "abc123" not in text
+        assert secret_hex not in text
+        assert "supersecret" not in text
+        assert "<redacted>" in text
+
+    def test_redact_handles_strings_and_nested_values(self):
+        payload = redact(
+            {
+                "api_key": "abc123",
+                "headers": ["Authorization token=secret-token"],
+                "safe": "value",
+            }
+        )
+        assert payload["api_key"] == "<redacted>"
+        assert payload["headers"] == ["Authorization token=<redacted>"]
+        assert payload["safe"] == "value"
 
 
 class TestIngestThreatIntelTool:
