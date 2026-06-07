@@ -22,12 +22,13 @@ def generate_candidates(
     protocol_type = (index.get("protocol_type") or "unknown").lower()
     candidates: list[CandidateFinding] = []
     titles_seen = {candidate.title for candidate in storage.list_candidates()}
+    next_number = _next_candidate_number(storage)
 
     for template in _templates(index, protocol_type, mode, focus):
         if template["title"] in titles_seen:
             continue
         candidate = CandidateFinding(
-            id=_next_candidate_id(storage, offset=len(candidates)),
+            id=f"ZP-{next_number:03d}",
             project_id=config.project_id,
             title=template["title"],
             severity_guess=template.get("severity_guess"),
@@ -54,18 +55,19 @@ def generate_candidates(
         )
         storage.save_candidate(candidate)
         candidates.append(candidate)
+        next_number += 1
         if len(candidates) >= limit:
             break
     return candidates
 
 
-def _next_candidate_id(storage: Storage, *, offset: int = 0) -> str:
+def _next_candidate_number(storage: Storage) -> int:
     highest = 0
     for candidate in storage.list_candidates():
         match = re.match(r"ZP-(\d+)", candidate.id)
         if match:
             highest = max(highest, int(match.group(1)))
-    return f"ZP-{highest + offset + 1:03d}"
+    return highest + 1
 
 
 def _templates(index: dict, protocol_type: str, mode: str, focus: str | None) -> list[dict]:

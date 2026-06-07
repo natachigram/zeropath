@@ -25,6 +25,33 @@ def test_candidate_generation_and_lifecycle_update(tmp_path):
     candidates = generate_candidates(storage, mode="critical", limit=5)
 
     assert len(candidates) == 1
+    assert [candidate.id for candidate in candidates] == ["ZP-001"]
     assert candidates[0].status == "hypothesis"
     updated = storage.update_candidate_status(candidates[0].id, "rejected", "no reachable state")
     assert updated.status == "rejected"
+
+
+def test_candidate_generation_uses_sequential_ids(tmp_path):
+    storage = Storage(tmp_path)
+    storage.initialize(ProjectConfig(project_id="demo", root_path=str(tmp_path), adapter="evm"))
+    storage.save_record(
+        "ingest",
+        "evm_index",
+        {
+            "protocol_type": "lending",
+            "signals": ["oracle", "upgradeable"],
+            "contracts": [{"name": "Vault", "file": "src/Vault.sol"}],
+            "functions": [
+                {"name": "borrow", "contract": "Vault", "file": "src/Vault.sol", "line_start": 10},
+                {"name": "liquidate", "contract": "Vault", "file": "src/Vault.sol", "line_start": 20},
+                {"name": "initialize", "contract": "Vault", "file": "src/Vault.sol", "line_start": 30},
+            ],
+            "raw_signal_text": [
+                "oracle latestRoundData price borrow liquidate collateral healthFactor threshold closeFactor initialize"
+            ],
+        },
+    )
+
+    candidates = generate_candidates(storage, mode="critical", limit=5)
+
+    assert [candidate.id for candidate in candidates] == ["ZP-001", "ZP-002", "ZP-003"]
