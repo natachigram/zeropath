@@ -113,6 +113,9 @@ TODO: add protocol-specific mitigation after proof is complete.
 - Root cause lines present: {candidate.evidence.root_cause_lines_present}
 - Attacker path present: {candidate.evidence.attacker_path_present}
 - State preconditions present: {candidate.evidence.state_preconditions_present}
+- Known issues checked: {candidate.evidence.known_issues_checked}
+- Duplicate risk checked: {candidate.evidence.duplicate_risk_checked}
+- Live config checked: {candidate.evidence.live_config_checked}
 - Profit measured: {candidate.evidence.profit_measured}
 - Chain ID: {candidate.evidence.chain_id or 'not checked'}
 - Fork block: {candidate.evidence.fork_block or 'not checked'}

@@ -9,6 +9,9 @@ EVIDENCE_CHECKS = (
     "root_cause_lines_present",
     "attacker_path_present",
     "state_preconditions_present",
+    "known_issues_checked",
+    "duplicate_risk_checked",
+    "live_config_checked",
     "poc_path",
     "trace_path",
     "forge_result",
@@ -27,6 +30,12 @@ def evidence_score(evidence: EvidenceBundle) -> int:
     if evidence.attacker_path_present:
         score += 1
     if evidence.state_preconditions_present:
+        score += 1
+    if evidence.known_issues_checked:
+        score += 1
+    if evidence.duplicate_risk_checked:
+        score += 1
+    if evidence.live_config_checked:
         score += 1
     if evidence.poc_path:
         score += 1
@@ -57,11 +66,19 @@ def missing_evidence(evidence: EvidenceBundle) -> list[str]:
         missing.append("attacker path")
     if not evidence.state_preconditions_present:
         missing.append("reachable state preconditions")
+    if not evidence.known_issues_checked:
+        missing.append("known issue check")
+    if not evidence.duplicate_risk_checked:
+        missing.append("duplicate risk check")
     if not evidence.poc_path:
         missing.append("PoC artifact")
     if evidence.forge_result != "passed" and evidence.invariant_test_result != "passed":
         missing.append("passing proof result")
-    if evidence.chain_id is None and evidence.fork_block is None:
+    if (
+        evidence.chain_id is None
+        and evidence.fork_block is None
+        and not evidence.live_config_checked
+    ):
         missing.append("live/fork configuration check")
     if not evidence.profit_measured:
         missing.append("measured impact/profit")

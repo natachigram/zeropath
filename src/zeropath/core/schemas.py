@@ -124,6 +124,9 @@ class EvidenceBundle(CoreModel):
     root_cause_lines_present: bool = False
     attacker_path_present: bool = False
     state_preconditions_present: bool = False
+    known_issues_checked: bool = False
+    duplicate_risk_checked: bool = False
+    live_config_checked: bool = False
     poc_path: str | None = None
     trace_path: str | None = None
     forge_result: str | None = None
