@@ -23,7 +23,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import click
 from rich.console import Console
@@ -33,10 +33,22 @@ from rich.text import Text
 
 from zeropath.config import Settings
 from zeropath.exceptions import GitHubIngestionError, ZeropathError
-from zeropath.graph_builder import ProtocolGraphBuilder
-from zeropath.graph_db import Neo4jGraphDB
 from zeropath.logging_config import configure_logging, get_logger
-from zeropath.models import ProtocolGraph
+
+try:
+    from zeropath.graph_builder import ProtocolGraphBuilder
+except Exception:  # pragma: no cover - optional legacy dependency path
+    ProtocolGraphBuilder = None
+
+try:
+    from zeropath.graph_db import Neo4jGraphDB
+except Exception:  # pragma: no cover - optional legacy dependency path
+    Neo4jGraphDB = None
+
+try:
+    from zeropath.models import ProtocolGraph
+except Exception:  # pragma: no cover - optional legacy dependency path
+    ProtocolGraph = None
 
 logger = get_logger(__name__)
 console = Console()
@@ -1265,14 +1277,437 @@ def contest(
 
 
 # ---------------------------------------------------------------------------
+# Evidence-first engine CLI
+# ---------------------------------------------------------------------------
+
+
+@cli.command("init")
+@click.option("--repo", type=click.Path(file_okay=False, path_type=Path), default=Path("."), show_default=True)
+@click.option("--write-agent-files", is_flag=True, help="Copy agent integration templates into .zeropath/exports.")
+def zp_init(repo: Path, write_agent_files: bool) -> None:
+    """Initialize local ZeroPath project state."""
+    from zeropath.core.project import init_project
+
+    storage, config, detection = init_project(repo)
+    if write_agent_files:
+        _copy_agent_templates(storage)
+    table = Table(title="ZeroPath init", show_header=True)
+    table.add_column("Field"); table.add_column("Value")
+    table.add_row("project_id", config.project_id)
+    table.add_row("adapter", f"{detection.adapter} ({detection.confidence})")
+    table.add_row("build_system", detection.build_system or "unknown")
+    table.add_row("state", str(storage.zp_dir))
+    table.add_row("next", "zeropath ingest --repo .")
+    console.print(table)
+
+
+@cli.command("status")
+@click.option("--repo", type=click.Path(file_okay=False, path_type=Path), default=Path("."), show_default=True)
+def zp_status(repo: Path) -> None:
+    """Show current evidence-first project status."""
+    from zeropath.core.storage import Storage
+
+    storage = Storage(repo)
+    try:
+        summary = storage.status_summary()
+    except Exception as exc:
+        console.print(f"[red]Status unavailable:[/red] {exc}")
+        raise click.Exit(1)
+    table = Table(title="ZeroPath status", show_header=True)
+    table.add_column("Field"); table.add_column("Value")
+    for key in ("project_id", "adapter", "build_system", "indexed_contracts", "protocol_intent", "protocol_type", "memory_count"):
+        table.add_row(key, str(summary.get(key)))
+    table.add_row("candidates", json.dumps(summary.get("candidates_by_status", {}), sort_keys=True))
+    if summary.get("last_judge"):
+        table.add_row("last_judge", summary["last_judge"]["candidate_id"])
+    console.print(table)
+
+
+@cli.command("ingest")
+@click.option("--repo", type=click.Path(file_okay=False, path_type=Path), default=Path("."), show_default=True)
+@click.option("--docs", multiple=True, type=click.Path(path_type=Path), help="Documentation path to associate with the project.")
+@click.option("--scope", multiple=True, type=click.Path(path_type=Path), help="Scope file to associate with the project.")
+def zp_ingest(repo: Path, docs: tuple[Path, ...], scope: tuple[Path, ...]) -> None:
+    """Index project files through the detected adapter."""
+    from zeropath.adapters.evm import EVMAdapter
+    from zeropath.core.storage import Storage
+
+    storage = Storage(repo)
+    try:
+        config = storage.load_project_config()
+    except Exception as exc:
+        console.print(f"[red]Ingest blocked:[/red] {exc}")
+        raise click.Exit(1)
+    config.docs_paths = [str(path) for path in docs] or config.docs_paths
+    config.scope_files = [str(path) for path in scope] or config.scope_files
+    if config.adapter != "evm":
+        console.print(f"[yellow]No stable ingest adapter for {config.adapter!r} yet.[/yellow]")
+        raise click.Exit(1)
+    adapter = EVMAdapter(config.root_path)
+    index = adapter.ingest_project(config)
+    config.source_paths = [item["path"] for item in index.get("files", [])]
+    storage.save_project_config(config)
+    storage.save_record("ingest", "evm_index", index)
+    table = Table(title="ZeroPath ingest", show_header=True)
+    table.add_column("Metric"); table.add_column("Value")
+    table.add_row("adapter", "evm")
+    table.add_row("files", str(len(index.get("files", []))))
+    table.add_row("contracts", str(len(index.get("contracts", []))))
+    table.add_row("functions", str(len(index.get("functions", []))))
+    table.add_row("protocol_type", index.get("protocol_type", "unknown"))
+    table.add_row("note", "No vulnerability findings were produced.")
+    console.print(table)
+
+
+@cli.command("understand")
+@click.option("--repo", type=click.Path(file_okay=False, path_type=Path), default=Path("."), show_default=True)
+def zp_understand(repo: Path) -> None:
+    """Generate a protocol intent snapshot from indexed evidence."""
+    from zeropath.core.intent import build_protocol_intent
+    from zeropath.core.storage import Storage
+
+    storage = Storage(repo)
+    try:
+        intent = build_protocol_intent(storage)
+    except Exception as exc:
+        console.print(f"[red]Understand failed:[/red] {exc}")
+        raise click.Exit(1)
+    table = Table(title="Protocol intent", show_header=True)
+    table.add_column("Field"); table.add_column("Value")
+    table.add_row("protocol", intent.protocol_name or "unknown")
+    table.add_row("type", intent.protocol_type or "unknown")
+    table.add_row("roles", str(len(intent.roles)))
+    table.add_row("dependencies", str(len(intent.external_dependencies)))
+    table.add_row("invariants", str(len(intent.critical_invariants)))
+    table.add_row("snapshot", str(storage.zp_dir / "artifacts/snapshots/protocol_intent.json"))
+    console.print(table)
+    console.print(intent.summary)
+
+
+@cli.command("hunt")
+@click.option("--repo", type=click.Path(file_okay=False, path_type=Path), default=Path("."), show_default=True)
+@click.option("--mode", type=click.Choice(["critical", "high-medium", "qa"]), default="critical", show_default=True)
+@click.option("--limit", type=int, default=5, show_default=True)
+@click.option("--focus", default=None, help="Optional focus term, such as oracle or vault.")
+def zp_hunt(repo: Path, mode: str, limit: int, focus: Optional[str]) -> None:
+    """Generate evidence-seeking hypotheses, not final findings."""
+    from zeropath.core.candidates import generate_candidates
+    from zeropath.core.storage import Storage
+
+    storage = Storage(repo)
+    try:
+        candidates = generate_candidates(storage, mode=mode, limit=limit, focus=focus)
+    except Exception as exc:
+        console.print(f"[red]Hunt failed:[/red] {exc}")
+        raise click.Exit(1)
+    table = Table(title="Candidate hypotheses", show_header=True)
+    table.add_column("ID"); table.add_column("Severity"); table.add_column("Title"); table.add_column("Status")
+    for candidate in candidates:
+        table.add_row(candidate.id, candidate.severity_guess or "unknown", candidate.title, candidate.status)
+    if not candidates:
+        table.add_row("-", "-", "No template matched indexed evidence.", "-")
+    console.print(table)
+    console.print("[yellow]Hypotheses are not findings. Run `zeropath prove` and `zeropath judge` before reporting.[/yellow]")
+
+
+@cli.group("candidates")
+def zp_candidates() -> None:
+    """List, inspect, and update candidate hypotheses."""
+
+
+@zp_candidates.command("list")
+@click.option("--repo", type=click.Path(file_okay=False, path_type=Path), default=Path("."), show_default=True)
+def zp_candidates_list(repo: Path) -> None:
+    from zeropath.core.evidence import evidence_score
+    from zeropath.core.storage import Storage
+
+    storage = Storage(repo)
+    candidates = storage.list_candidates()
+    table = Table(title="ZeroPath candidates", show_header=True)
+    table.add_column("ID"); table.add_column("Status"); table.add_column("Evidence"); table.add_column("Title")
+    for candidate in candidates:
+        table.add_row(candidate.id, candidate.status, str(evidence_score(candidate.evidence)), candidate.title)
+    if not candidates:
+        table.add_row("-", "-", "-", "No candidates yet.")
+    console.print(table)
+
+
+@zp_candidates.command("show")
+@click.argument("candidate_id")
+@click.option("--repo", type=click.Path(file_okay=False, path_type=Path), default=Path("."), show_default=True)
+def zp_candidates_show(candidate_id: str, repo: Path) -> None:
+    from zeropath.core.storage import Storage
+
+    candidate = Storage(repo).load_candidate(candidate_id)
+    if candidate is None:
+        console.print(f"[red]Candidate not found:[/red] {candidate_id}")
+        raise click.Exit(1)
+    console.print_json(json.dumps(candidate.model_dump(mode="json"), indent=2))
+
+
+@zp_candidates.command("update")
+@click.argument("candidate_id")
+@click.option("--repo", type=click.Path(file_okay=False, path_type=Path), default=Path("."), show_default=True)
+@click.option("--status", required=True, type=click.Choice([
+    "observation", "hypothesis", "path_identified", "state_planned", "poc_generated",
+    "poc_passed", "judge_passed", "report_ready", "rejected", "stale", "needs_evidence",
+]))
+@click.option("--reason", default=None, help="Evidence or rejection reason.")
+def zp_candidates_update(candidate_id: str, repo: Path, status: str, reason: Optional[str]) -> None:
+    from zeropath.core.storage import Storage
+
+    try:
+        candidate = Storage(repo).update_candidate_status(candidate_id, status, reason)
+    except Exception as exc:
+        console.print(f"[red]Update failed:[/red] {exc}")
+        raise click.Exit(1)
+    console.print(f"[green]{candidate.id}[/green] -> {candidate.status}")
+
+
+@cli.command("prove")
+@click.argument("candidate_id")
+@click.option("--repo", type=click.Path(file_okay=False, path_type=Path), default=Path("."), show_default=True)
+@click.option("--backend", type=click.Choice(["foundry"]), default="foundry", show_default=True)
+@click.option("--write-test-dir", is_flag=True, help="Also write a Foundry test under test/zeropath if safe.")
+@click.option("--force", is_flag=True, help="Allow overwriting generated Foundry test file.")
+@click.option("--run/--no-run", default=True, show_default=True, help="Run backend proof if available.")
+def zp_prove(candidate_id: str, repo: Path, backend: str, write_test_dir: bool, force: bool, run: bool) -> None:
+    """Generate a candidate proof skeleton and optionally run a backend."""
+    from zeropath.adapters.evm import EVMAdapter
+    from zeropath.adapters.evm.forge import run_forge_test
+    from zeropath.adapters.evm.foundry import write_candidate_test
+    from zeropath.core.storage import Storage
+
+    storage = Storage(repo)
+    candidate = storage.load_candidate(candidate_id)
+    if candidate is None:
+        console.print(f"[red]Candidate not found:[/red] {candidate_id}")
+        raise click.Exit(1)
+    adapter = EVMAdapter(repo)
+    poc = adapter.generate_poc(candidate)
+    if not poc:
+        console.print("[yellow]PoC could not be generated by the adapter.[/yellow]")
+        raise click.Exit(1)
+    artifact = storage.append_artifact(Path("pocs") / f"{candidate.id.replace('-', '_')}.t.sol", poc, overwrite=True)
+    candidate.evidence.poc_path = str(artifact)
+    candidate.status = "poc_generated"
+    if write_test_dir:
+        try:
+            test_path = write_candidate_test(repo, candidate, force=force)
+            candidate.evidence.notes.append(f"Foundry test written to {test_path}")
+        except FileExistsError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise click.Exit(1)
+    if run and backend == "foundry":
+        result = run_forge_test(repo)
+        candidate.evidence.forge_result = result.get("status")
+        candidate.evidence.notes.append(result.get("message") or f"forge test status: {result.get('status')}")
+        if result.get("status") == "passed":
+            candidate.status = "poc_passed"
+    storage.save_candidate(candidate)
+    console.print(f"[green]PoC skeleton:[/green] {artifact}")
+    console.print(f"Forge result: {candidate.evidence.forge_result or 'not run'}")
+
+
+@cli.command("judge")
+@click.argument("candidate_id")
+@click.option("--repo", type=click.Path(file_okay=False, path_type=Path), default=Path("."), show_default=True)
+def zp_judge(candidate_id: str, repo: Path) -> None:
+    """Run skeptical judge checks for one candidate."""
+    from zeropath.core.judge import judge_candidate
+    from zeropath.core.storage import Storage
+
+    storage = Storage(repo)
+    candidate = storage.load_candidate(candidate_id)
+    if candidate is None:
+        console.print(f"[red]Candidate not found:[/red] {candidate_id}")
+        raise click.Exit(1)
+    result = judge_candidate(candidate, storage)
+    table = Table(title=f"Judge {candidate_id}", show_header=True)
+    table.add_column("Check"); table.add_column("Value")
+    table.add_row("report_ready", str(result.report_ready))
+    table.add_row("severity", result.severity)
+    table.add_row("funds_at_risk", str(result.funds_at_risk))
+    table.add_row("attacker_realistic", str(result.attacker_realistic))
+    table.add_row("state_reachable", str(result.state_reachable))
+    table.add_row("live_config_reachable", str(result.live_config_reachable))
+    table.add_row("blocking", "; ".join(result.blocking_objections) or "none")
+    console.print(table)
+    if result.required_next_steps:
+        console.print("[yellow]Next evidence steps:[/yellow]")
+        for step in result.required_next_steps:
+            console.print(f"- {step}")
+
+
+@cli.command("report")
+@click.argument("candidate_id")
+@click.option("--repo", type=click.Path(file_okay=False, path_type=Path), default=Path("."), show_default=True)
+@click.option("--format", "report_format", type=click.Choice(["code4rena", "sherlock", "cantina", "internal"]), default="code4rena", show_default=True)
+@click.option("--draft", is_flag=True, help="Export a clearly marked draft even if judge has not passed.")
+def zp_report(candidate_id: str, repo: Path, report_format: str, draft: bool) -> None:
+    """Export a judge-gated report."""
+    from zeropath.core.errors import ReportNotReadyError
+    from zeropath.core.reports import export_report
+    from zeropath.core.storage import Storage
+
+    try:
+        path = export_report(Storage(repo), candidate_id, report_format=report_format, draft=draft)
+    except ReportNotReadyError as exc:
+        console.print(f"[red]Report refused:[/red] {exc}")
+        console.print("Use --draft for an explicitly marked draft, or add evidence and rerun judge.")
+        raise click.Exit(1)
+    except Exception as exc:
+        console.print(f"[red]Report failed:[/red] {exc}")
+        raise click.Exit(1)
+    console.print(f"[green]Report exported:[/green] {path}")
+
+
+@cli.group("memory")
+def zp_memory() -> None:
+    """Manage the research ledger."""
+
+
+@zp_memory.command("search")
+@click.argument("query")
+@click.option("--repo", type=click.Path(file_okay=False, path_type=Path), default=Path("."), show_default=True)
+@click.option("--scope", default=None)
+@click.option("--type", "memory_type", default=None)
+@click.option("--tag", "tags", multiple=True)
+def zp_memory_search(query: str, repo: Path, scope: Optional[str], memory_type: Optional[str], tags: tuple[str, ...]) -> None:
+    from zeropath.core.memory import search_memory
+    from zeropath.core.storage import Storage
+
+    results = search_memory(Storage(repo), query, scope=scope, memory_type=memory_type, tags=list(tags))
+    _print_memory_table(results, "Memory search")
+
+
+@zp_memory.command("list")
+@click.option("--repo", type=click.Path(file_okay=False, path_type=Path), default=Path("."), show_default=True)
+@click.option("--type", "memory_type", default=None)
+def zp_memory_list(repo: Path, memory_type: Optional[str]) -> None:
+    from zeropath.core.storage import Storage
+
+    items = Storage(repo).list_memory()
+    if memory_type:
+        items = [item for item in items if item.memory_type == memory_type]
+    _print_memory_table(items, "Memory")
+
+
+@zp_memory.command("add")
+@click.option("--repo", type=click.Path(file_okay=False, path_type=Path), default=Path("."), show_default=True)
+@click.option("--type", "memory_type", required=True)
+@click.option("--content", required=True)
+@click.option("--scope", default="current_project", show_default=True)
+@click.option("--confidence", default="inferred", show_default=True)
+@click.option("--source", default="manual", show_default=True)
+@click.option("--tag", "tags", multiple=True)
+@click.option("--user-approved", is_flag=True, help="Allow durable research_lesson admission.")
+def zp_memory_add(
+    repo: Path,
+    memory_type: str,
+    content: str,
+    scope: str,
+    confidence: str,
+    source: str,
+    tags: tuple[str, ...],
+    user_approved: bool,
+) -> None:
+    from zeropath.core.memory import propose_memory
+    from zeropath.core.storage import Storage
+
+    decision, memory = propose_memory(
+        Storage(repo),
+        content=content,
+        memory_type=memory_type,
+        scope=scope,
+        confidence=confidence,
+        source=source,
+        tags=list(tags),
+        context={"user_approved": user_approved},
+    )
+    if decision.save and memory:
+        console.print(f"[green]Saved[/green] {memory.id}: {decision.reason}")
+    else:
+        console.print(f"[yellow]Not saved:[/yellow] {decision.reason}")
+
+
+@zp_memory.command("forget")
+@click.argument("memory_id")
+@click.option("--repo", type=click.Path(file_okay=False, path_type=Path), default=Path("."), show_default=True)
+def zp_memory_forget(memory_id: str, repo: Path) -> None:
+    from zeropath.core.storage import Storage
+
+    removed = Storage(repo).delete_record("memory", memory_id)
+    console.print("[green]forgotten[/green]" if removed else "[yellow]not found[/yellow]")
+
+
+@zp_memory.command("mark-stale")
+@click.argument("memory_id")
+@click.option("--reason", required=True)
+@click.option("--repo", type=click.Path(file_okay=False, path_type=Path), default=Path("."), show_default=True)
+def zp_memory_mark_stale(memory_id: str, reason: str, repo: Path) -> None:
+    from zeropath.core.memory import mark_memory_stale
+    from zeropath.core.storage import Storage
+
+    ok = mark_memory_stale(Storage(repo), memory_id, reason)
+    console.print("[green]marked stale[/green]" if ok else "[yellow]not found[/yellow]")
+
+
+@zp_memory.command("rejected")
+@click.option("--repo", type=click.Path(file_okay=False, path_type=Path), default=Path("."), show_default=True)
+def zp_memory_rejected(repo: Path) -> None:
+    from zeropath.core.memory import rejected_memories
+    from zeropath.core.storage import Storage
+
+    _print_memory_table(rejected_memories(Storage(repo)), "Rejected hypotheses")
+
+
+@zp_memory.command("consolidate")
+@click.option("--repo", type=click.Path(file_okay=False, path_type=Path), default=Path("."), show_default=True)
+def zp_memory_consolidate(repo: Path) -> None:
+    from zeropath.core.storage import Storage
+
+    path = Storage(repo).export_json_files()
+    console.print(f"[green]Exported storage snapshot:[/green] {path}")
+
+
+def _print_memory_table(items: list[Any], title: str) -> None:
+    table = Table(title=title, show_header=True)
+    table.add_column("ID"); table.add_column("Type"); table.add_column("Scope"); table.add_column("Confidence"); table.add_column("Content")
+    for item in items:
+        table.add_row(item.id, item.memory_type, item.scope, item.confidence, item.content[:90])
+    if not items:
+        table.add_row("-", "-", "-", "-", "No memory items.")
+    console.print(table)
+
+
+def _copy_agent_templates(storage) -> None:
+    package_dir = Path(__file__).resolve().parent
+    template_dir = package_dir / "templates" / "agent"
+    if not template_dir.exists():
+        return
+    exports = storage.zp_dir / "exports"
+    exports.mkdir(parents=True, exist_ok=True)
+    for template in template_dir.iterdir():
+        if template.is_file():
+            target = exports / template.name
+            if not target.exists():
+                shutil.copyfile(template, target)
+
+
+# ---------------------------------------------------------------------------
 # MCP (Model Context Protocol) — expose ZeroPath to IDE-side agents
 # ---------------------------------------------------------------------------
 
 
-@cli.group()
+@cli.group(invoke_without_command=True)
 @click.pass_context
 def mcp(ctx: click.Context) -> None:
     """Run ZeroPath as an MCP server / install it into your IDE."""
+    if ctx.invoked_subcommand is None:
+        from zeropath.mcp.server import serve_stdio
+
+        serve_stdio(Path("."))
 
 
 @mcp.command("serve")

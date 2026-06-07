@@ -1,29 +1,16 @@
+"""ZeroPath package.
+
+Package-level legacy exports are loaded lazily so lightweight evidence-first
+modules can be used without importing optional graph, Neo4j, or Slither paths.
 """
-ZeroPath — Production-grade smart contract analyzer.
 
-Phase 1: Protocol Ingestion + Graph Builder
-Phase 2: Invariant Inference Engine
-Phase 3: Adversarial Attack Hypothesis Swarm
+from __future__ import annotations
 
-Public API::
-
-    from zeropath import ProtocolGraphBuilder, ProtocolGraph, Neo4jGraphDB
-    from zeropath.invariants import InvariantInferenceEngine
-    from zeropath.adversarial import SwarmOrchestrator
-
-    builder = ProtocolGraphBuilder()
-    graph = builder.build_from_directory(Path("contracts/"))
-
-    inv_engine = InvariantInferenceEngine()
-    inv_report = inv_engine.analyse(graph, protocol_name="MyProtocol")
-
-    swarm = SwarmOrchestrator()
-    attack_report = swarm.run(inv_report, graph)
-"""
+from importlib import import_module
 
 __version__ = "0.3.0"
 
-from zeropath.exceptions import (
+from zeropath.exceptions import (  # noqa: E402
     ASTExtractionError,
     AssetFlowTrackingError,
     BytecodeDecompilationError,
@@ -37,35 +24,49 @@ from zeropath.exceptions import (
     VersionDiffError,
     ZeropathError,
 )
-from zeropath.graph_builder import ProtocolGraphBuilder
-from zeropath.graph_db import Neo4jGraphDB
-from zeropath.models import (
-    AssetFlow,
-    Contract,
-    ContractLanguage,
-    Event,
-    ExternalDependency,
-    Function,
-    FunctionCall,
-    FunctionSignature,
-    Parameter,
-    ProtocolGraph,
-    ProxyRelationship,
-    ProxyType,
-    StateVariable,
-    VersionDiff,
-    Visibility,
-)
-from zeropath.bytecode_decompiler import DecompileResult, HeimdallDecompiler
-from zeropath.onchain_fetcher import OnChainFetcher, OnChainSource
-from zeropath.parser import ContractParser
-from zeropath.adversarial import SwarmOrchestrator, SwarmReport
-from zeropath.adversarial.models import AttackHypothesis, AttackClass
+
+_LAZY_EXPORTS = {
+    "ContractParser": ("zeropath.parser", "ContractParser"),
+    "HeimdallDecompiler": ("zeropath.bytecode_decompiler", "HeimdallDecompiler"),
+    "DecompileResult": ("zeropath.bytecode_decompiler", "DecompileResult"),
+    "OnChainFetcher": ("zeropath.onchain_fetcher", "OnChainFetcher"),
+    "OnChainSource": ("zeropath.onchain_fetcher", "OnChainSource"),
+    "ProtocolGraphBuilder": ("zeropath.graph_builder", "ProtocolGraphBuilder"),
+    "ProtocolGraph": ("zeropath.models", "ProtocolGraph"),
+    "Neo4jGraphDB": ("zeropath.graph_db", "Neo4jGraphDB"),
+    "Contract": ("zeropath.models", "Contract"),
+    "Function": ("zeropath.models", "Function"),
+    "FunctionCall": ("zeropath.models", "FunctionCall"),
+    "FunctionSignature": ("zeropath.models", "FunctionSignature"),
+    "Parameter": ("zeropath.models", "Parameter"),
+    "StateVariable": ("zeropath.models", "StateVariable"),
+    "Event": ("zeropath.models", "Event"),
+    "AssetFlow": ("zeropath.models", "AssetFlow"),
+    "ExternalDependency": ("zeropath.models", "ExternalDependency"),
+    "ProxyRelationship": ("zeropath.models", "ProxyRelationship"),
+    "VersionDiff": ("zeropath.models", "VersionDiff"),
+    "Visibility": ("zeropath.models", "Visibility"),
+    "ContractLanguage": ("zeropath.models", "ContractLanguage"),
+    "ProxyType": ("zeropath.models", "ProxyType"),
+    "SwarmOrchestrator": ("zeropath.adversarial", "SwarmOrchestrator"),
+    "SwarmReport": ("zeropath.adversarial", "SwarmReport"),
+    "AttackHypothesis": ("zeropath.adversarial.models", "AttackHypothesis"),
+    "AttackClass": ("zeropath.adversarial.models", "AttackClass"),
+}
+
+
+def __getattr__(name: str):
+    if name not in _LAZY_EXPORTS:
+        raise AttributeError(f"module 'zeropath' has no attribute {name!r}")
+    module_name, attr = _LAZY_EXPORTS[name]
+    module = import_module(module_name)
+    value = getattr(module, attr)
+    globals()[name] = value
+    return value
+
 
 __all__ = [
-    # Version
     "__version__",
-    # Core builder + DB
     "ContractParser",
     "HeimdallDecompiler",
     "DecompileResult",
@@ -74,7 +75,6 @@ __all__ = [
     "ProtocolGraphBuilder",
     "ProtocolGraph",
     "Neo4jGraphDB",
-    # Models
     "Contract",
     "Function",
     "FunctionCall",
@@ -86,11 +86,9 @@ __all__ = [
     "ExternalDependency",
     "ProxyRelationship",
     "VersionDiff",
-    # Enums
     "Visibility",
     "ContractLanguage",
     "ProxyType",
-    # Exceptions
     "ZeropathError",
     "ParsingError",
     "ASTExtractionError",
@@ -103,7 +101,6 @@ __all__ = [
     "VersionDiffError",
     "BytecodeDecompilationError",
     "GitHubIngestionError",
-    # Phase 3 — Adversarial Swarm
     "SwarmOrchestrator",
     "SwarmReport",
     "AttackHypothesis",
