@@ -1,3 +1,5 @@
+import importlib
+
 from click.testing import CliRunner
 
 from zeropath.cli import cli
@@ -62,3 +64,31 @@ def test_report_command_refuses_final_without_judge(tmp_path):
     assert result.exit_code == 1
     assert "Report refused" in result.output
     assert "Traceback" not in result.output
+
+
+def test_cli_package_layout_exports_evidence_commands():
+    from zeropath.cli import cli as package_cli
+    from zeropath.cli import main as package_main
+
+    assert package_cli is cli
+    assert callable(package_main)
+    assert importlib.import_module("zeropath.cli.__main__").main is package_main
+
+    expected = {
+        "init": ("zeropath.cli.commands.init", "init"),
+        "status": ("zeropath.cli.commands.status", "status"),
+        "ingest": ("zeropath.cli.commands.ingest", "ingest"),
+        "understand": ("zeropath.cli.commands.understand", "understand"),
+        "hunt": ("zeropath.cli.commands.hunt", "hunt"),
+        "candidates": ("zeropath.cli.commands.candidates", "candidates"),
+        "prove": ("zeropath.cli.commands.prove", "prove"),
+        "judge": ("zeropath.cli.commands.judge", "judge"),
+        "report": ("zeropath.cli.commands.report", "report"),
+        "memory": ("zeropath.cli.commands.memory", "memory"),
+        "mcp": ("zeropath.cli.commands.mcp", "mcp"),
+    }
+
+    for command_name, (module_name, attr) in expected.items():
+        command = getattr(importlib.import_module(module_name), attr)
+        assert command.name == command_name
+        assert package_cli.commands[command_name] is command

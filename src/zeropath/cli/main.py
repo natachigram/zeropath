@@ -1685,7 +1685,7 @@ def _print_memory_table(items: list[Any], title: str) -> None:
 
 
 def _copy_agent_templates(storage) -> None:
-    package_dir = Path(__file__).resolve().parent
+    package_dir = Path(__file__).resolve().parents[1]
     template_dir = package_dir / "templates" / "agent"
     if not template_dir.exists():
         return

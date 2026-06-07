@@ -42,7 +42,7 @@ dev = [
 ]
 
 [project.scripts]
-zeropath = "zeropath.cli:main"
+zeropath = "zeropath.cli.main:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
