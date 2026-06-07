@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from zeropath.core.schemas import CandidateFinding, EvidenceBundle, Impact, SourceLocation
 from zeropath.core.storage import Storage
+
+RISK_VALUES = {"none", "low", "medium", "high"}
 
 
 def generate_candidates(
@@ -61,6 +64,68 @@ def generate_candidates(
     return candidates
 
 
+def update_candidate_evidence(
+    storage: Storage,
+    candidate_id: str,
+    **updates: Any,
+) -> CandidateFinding:
+    """Apply explicit evidence updates to one candidate and persist it."""
+
+    candidate = storage.load_candidate(candidate_id)
+    if candidate is None:
+        raise KeyError(f"Candidate not found: {candidate_id}")
+
+    evidence = candidate.evidence
+    for field in (
+        "root_cause_lines_present",
+        "attacker_path_present",
+        "state_preconditions_present",
+        "known_issues_checked",
+        "duplicate_risk_checked",
+        "live_config_checked",
+        "profit_measured",
+    ):
+        if updates.get(field):
+            setattr(evidence, field, True)
+
+    for field in ("poc_path", "trace_path", "forge_result", "invariant_test_result"):
+        value = updates.get(field)
+        if value is not None:
+            setattr(evidence, field, str(value))
+
+    if updates.get("chain_id") is not None:
+        evidence.chain_id = int(updates["chain_id"])
+        evidence.live_config_checked = True
+    if updates.get("fork_block") is not None:
+        evidence.fork_block = int(updates["fork_block"])
+        evidence.live_config_checked = True
+
+    duplicate_risk = _normalize_risk(updates.get("duplicate_risk"), "duplicate_risk")
+    if duplicate_risk is not None:
+        candidate.duplicate_risk = duplicate_risk
+        evidence.duplicate_risk_checked = True
+
+    known_issue_risk = _normalize_risk(updates.get("known_issue_risk"), "known_issue_risk")
+    if known_issue_risk is not None:
+        candidate.known_issue_risk = known_issue_risk
+        evidence.known_issues_checked = True
+
+    if updates.get("impact_measured") or updates.get("profit_measured"):
+        candidate.impact.measured = True
+    if updates.get("amount"):
+        candidate.impact.amount = str(updates["amount"])
+
+    notes = list(updates.get("notes") or [])
+    if updates.get("note"):
+        notes.append(str(updates["note"]))
+    for note in notes:
+        if note:
+            evidence.notes.append(str(note))
+
+    storage.save_candidate(candidate)
+    return candidate
+
+
 def _next_candidate_number(storage: Storage) -> int:
     highest = 0
     for candidate in storage.list_candidates():
@@ -68,6 +133,16 @@ def _next_candidate_number(storage: Storage) -> int:
         if match:
             highest = max(highest, int(match.group(1)))
     return highest + 1
+
+
+def _normalize_risk(value: Any, field_name: str) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).lower()
+    if normalized not in RISK_VALUES:
+        allowed = ", ".join(sorted(RISK_VALUES))
+        raise ValueError(f"{field_name} must be one of: {allowed}")
+    return normalized
 
 
 def _templates(index: dict, protocol_type: str, mode: str, focus: str | None) -> list[dict]:

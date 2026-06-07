@@ -25,6 +25,8 @@ from typing import Any
 
 import pytest
 
+from zeropath.core.schemas import CandidateFinding, Impact, ProjectConfig
+from zeropath.core.storage import Storage
 from zeropath.mcp_server import (
     JsonRpcError,
     JsonRpcRequest,
@@ -466,6 +468,7 @@ class TestBuildDefaultServer:
             "zeropath_project_status",
             "zeropath_ingest_repo",
             "zeropath_generate_attack_hypotheses",
+            "zeropath_update_candidate_evidence",
             "zeropath_generate_foundry_poc",
             "zeropath_judge_candidate",
             "zeropath_export_report",
@@ -552,6 +555,48 @@ class TestEvidenceMcpSecurity:
         assert payload["api_key"] == "<redacted>"
         assert payload["headers"] == ["Authorization token=<redacted>"]
         assert payload["safe"] == "value"
+
+    def test_update_candidate_evidence_tool_persists_triage(self, tmp_path):
+        storage = Storage(tmp_path)
+        storage.initialize(ProjectConfig(project_id="demo", root_path=str(tmp_path), adapter="evm"))
+        storage.save_candidate(
+            CandidateFinding(
+                id="ZP-011",
+                project_id="demo",
+                title="MCP evidence target",
+                impact=Impact(impact_type="direct_theft", funds_at_risk=True, explanation="demo"),
+            )
+        )
+        server = build_default_server(workspace_root=tmp_path)
+
+        result = server.tools["zeropath_update_candidate_evidence"].handler(
+            {
+                "repo_path": str(tmp_path),
+                "candidate_id": "ZP-011",
+                "root_cause_lines_present": True,
+                "attacker_path_present": True,
+                "state_preconditions_present": True,
+                "duplicate_risk": "low",
+                "known_issue_risk": "none",
+                "live_config_checked": True,
+                "profit_measured": True,
+                "amount": "1 ether",
+                "notes": ["mcp triage"],
+                "write_mode": True,
+            }
+        )
+
+        assert result["ok"] is True
+        assert result["evidence_score"] >= 7
+        candidate = storage.load_candidate("ZP-011")
+        assert candidate.evidence.root_cause_lines_present is True
+        assert candidate.evidence.duplicate_risk_checked is True
+        assert candidate.evidence.known_issues_checked is True
+        assert candidate.evidence.live_config_checked is True
+        assert candidate.evidence.profit_measured is True
+        assert candidate.duplicate_risk == "low"
+        assert candidate.known_issue_risk == "none"
+        assert "mcp triage" in candidate.evidence.notes
 
 
 class TestIngestThreatIntelTool:

@@ -1467,6 +1467,91 @@ def zp_candidates_update(candidate_id: str, repo: Path, status: str, reason: Opt
     console.print(f"[green]{candidate.id}[/green] -> {candidate.status}")
 
 
+@zp_candidates.command("evidence")
+@click.argument("candidate_id")
+@click.option("--repo", type=click.Path(file_okay=False, path_type=Path), default=Path("."), show_default=True)
+@click.option("--root-cause-lines", is_flag=True, help="Mark root cause source lines as evidenced.")
+@click.option("--attacker-path", is_flag=True, help="Mark attacker transaction path as evidenced.")
+@click.option("--state-preconditions", is_flag=True, help="Mark reachable state preconditions as evidenced.")
+@click.option("--known-issues-checked", is_flag=True, help="Mark known-issue triage as complete.")
+@click.option("--duplicate-risk-checked", is_flag=True, help="Mark duplicate-risk triage as complete.")
+@click.option("--live-config-checked", is_flag=True, help="Mark deployment/fork configuration as checked.")
+@click.option("--duplicate-risk", type=click.Choice(["none", "low", "medium", "high"], case_sensitive=False))
+@click.option("--known-issue-risk", type=click.Choice(["none", "low", "medium", "high"], case_sensitive=False))
+@click.option("--chain-id", type=int)
+@click.option("--fork-block", type=int)
+@click.option("--poc-path", type=click.Path(path_type=Path))
+@click.option("--trace-path", type=click.Path(path_type=Path))
+@click.option("--forge-result", type=click.Choice(["passed", "failed", "unavailable", "not_run"], case_sensitive=False))
+@click.option("--invariant-test-result", type=click.Choice(["passed", "failed", "unavailable", "not_run"], case_sensitive=False))
+@click.option("--impact-measured", is_flag=True)
+@click.option("--profit-measured", is_flag=True)
+@click.option("--amount", default=None, help="Concrete measured impact amount or bound.")
+@click.option("--note", "notes", multiple=True, help="Append an evidence note. Repeatable.")
+def zp_candidates_evidence(
+    candidate_id: str,
+    repo: Path,
+    root_cause_lines: bool,
+    attacker_path: bool,
+    state_preconditions: bool,
+    known_issues_checked: bool,
+    duplicate_risk_checked: bool,
+    live_config_checked: bool,
+    duplicate_risk: Optional[str],
+    known_issue_risk: Optional[str],
+    chain_id: Optional[int],
+    fork_block: Optional[int],
+    poc_path: Optional[Path],
+    trace_path: Optional[Path],
+    forge_result: Optional[str],
+    invariant_test_result: Optional[str],
+    impact_measured: bool,
+    profit_measured: bool,
+    amount: Optional[str],
+    notes: tuple[str, ...],
+) -> None:
+    """Record concrete evidence and triage facts for a candidate."""
+    from zeropath.core.candidates import update_candidate_evidence
+    from zeropath.core.evidence import evidence_score, missing_evidence
+    from zeropath.core.storage import Storage
+
+    try:
+        candidate = update_candidate_evidence(
+            Storage(repo),
+            candidate_id,
+            root_cause_lines_present=root_cause_lines,
+            attacker_path_present=attacker_path,
+            state_preconditions_present=state_preconditions,
+            known_issues_checked=known_issues_checked,
+            duplicate_risk_checked=duplicate_risk_checked,
+            live_config_checked=live_config_checked,
+            duplicate_risk=duplicate_risk,
+            known_issue_risk=known_issue_risk,
+            chain_id=chain_id,
+            fork_block=fork_block,
+            poc_path=poc_path,
+            trace_path=trace_path,
+            forge_result=forge_result,
+            invariant_test_result=invariant_test_result,
+            impact_measured=impact_measured,
+            profit_measured=profit_measured,
+            amount=amount,
+            notes=list(notes),
+        )
+    except Exception as exc:
+        console.print(f"[red]Evidence update failed:[/red] {exc}")
+        raise click.Exit(1)
+
+    table = Table(title=f"Evidence updated: {candidate.id}", show_header=True)
+    table.add_column("Field"); table.add_column("Value")
+    table.add_row("score", str(evidence_score(candidate.evidence)))
+    table.add_row("status", candidate.status)
+    table.add_row("duplicate_risk", candidate.duplicate_risk or "unknown")
+    table.add_row("known_issue_risk", candidate.known_issue_risk or "unknown")
+    table.add_row("missing", ", ".join(missing_evidence(candidate.evidence)) or "none")
+    console.print(table)
+
+
 @cli.command("prove")
 @click.argument("candidate_id")
 @click.option("--repo", type=click.Path(file_okay=False, path_type=Path), default=Path("."), show_default=True)

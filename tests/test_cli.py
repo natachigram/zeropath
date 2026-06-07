@@ -66,6 +66,58 @@ def test_report_command_refuses_final_without_judge(tmp_path):
     assert "Traceback" not in result.output
 
 
+def test_candidates_evidence_command_updates_candidate(tmp_path):
+    storage = Storage(tmp_path)
+    storage.initialize(ProjectConfig(project_id="demo", root_path=str(tmp_path), adapter="evm"))
+    storage.save_candidate(
+        CandidateFinding(
+            id="ZP-002",
+            project_id="demo",
+            title="Evidence target",
+            impact=Impact(impact_type="direct_theft", funds_at_risk=True, explanation="demo"),
+        )
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli,
+        [
+            "candidates",
+            "evidence",
+            "ZP-002",
+            "--repo",
+            str(tmp_path),
+            "--root-cause-lines",
+            "--attacker-path",
+            "--state-preconditions",
+            "--duplicate-risk",
+            "low",
+            "--known-issue-risk",
+            "none",
+            "--chain-id",
+            "1",
+            "--profit-measured",
+            "--amount",
+            "1 ether",
+            "--note",
+            "manual triage complete",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Evidence updated" in result.output
+    updated = storage.load_candidate("ZP-002")
+    assert updated.evidence.root_cause_lines_present is True
+    assert updated.evidence.attacker_path_present is True
+    assert updated.evidence.state_preconditions_present is True
+    assert updated.evidence.duplicate_risk_checked is True
+    assert updated.evidence.known_issues_checked is True
+    assert updated.evidence.chain_id == 1
+    assert updated.evidence.profit_measured is True
+    assert updated.impact.amount == "1 ether"
+    assert "manual triage complete" in updated.evidence.notes
+
+
 def test_cli_package_layout_exports_evidence_commands():
     from zeropath.cli import cli as package_cli
     from zeropath.cli import main as package_main

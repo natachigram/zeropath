@@ -35,6 +35,7 @@ def build_evidence_tools(state: EvidenceMCPState) -> list[Tool]:
         _get_asset_flow(state),
         _generate_attack_hypotheses(state),
         _get_candidate(state),
+        _update_candidate_evidence(state),
         _build_state_plan(state),
         _generate_foundry_poc(state),
         _run_poc(state),
@@ -214,6 +215,78 @@ def _get_candidate(state: EvidenceMCPState) -> Tool:
         return _ok(candidate=candidate.model_dump(mode="json") if candidate else None)
 
     return Tool("zeropath_get_candidate", "Return one CandidateFinding.", object_schema({"repo_path": {"type": "string"}, "candidate_id": {"type": "string"}}, ["candidate_id"]), handler)
+
+
+def _update_candidate_evidence(state: EvidenceMCPState) -> Tool:
+    def handler(args: dict[str, Any]) -> dict[str, Any]:
+        if not require_write(args):
+            return _err("write_mode=true is required to update candidate evidence")
+        repo = state.repo(args)
+        log_tool_call(repo, "zeropath_update_candidate_evidence", args)
+        try:
+            from zeropath.core.candidates import update_candidate_evidence
+            from zeropath.core.evidence import evidence_score, missing_evidence
+
+            candidate = update_candidate_evidence(
+                _storage(repo),
+                args["candidate_id"],
+                root_cause_lines_present=bool(args.get("root_cause_lines_present")),
+                attacker_path_present=bool(args.get("attacker_path_present")),
+                state_preconditions_present=bool(args.get("state_preconditions_present")),
+                known_issues_checked=bool(args.get("known_issues_checked")),
+                duplicate_risk_checked=bool(args.get("duplicate_risk_checked")),
+                live_config_checked=bool(args.get("live_config_checked")),
+                duplicate_risk=args.get("duplicate_risk"),
+                known_issue_risk=args.get("known_issue_risk"),
+                chain_id=args.get("chain_id"),
+                fork_block=args.get("fork_block"),
+                poc_path=args.get("poc_path"),
+                trace_path=args.get("trace_path"),
+                forge_result=args.get("forge_result"),
+                invariant_test_result=args.get("invariant_test_result"),
+                impact_measured=bool(args.get("impact_measured")),
+                profit_measured=bool(args.get("profit_measured")),
+                amount=args.get("amount"),
+                notes=args.get("notes") or [],
+                note=args.get("note"),
+            )
+            return _ok(
+                candidate=candidate.model_dump(mode="json"),
+                evidence_score=evidence_score(candidate.evidence),
+                missing_evidence=missing_evidence(candidate.evidence),
+            )
+        except Exception as exc:
+            return _err(str(exc))
+
+    return Tool(
+        "zeropath_update_candidate_evidence",
+        "Record concrete evidence and triage facts for a candidate. Requires write_mode=true.",
+        object_schema({
+            "repo_path": {"type": "string"},
+            "candidate_id": {"type": "string"},
+            "root_cause_lines_present": {"type": "boolean"},
+            "attacker_path_present": {"type": "boolean"},
+            "state_preconditions_present": {"type": "boolean"},
+            "known_issues_checked": {"type": "boolean"},
+            "duplicate_risk_checked": {"type": "boolean"},
+            "live_config_checked": {"type": "boolean"},
+            "duplicate_risk": {"type": "string", "enum": ["none", "low", "medium", "high"]},
+            "known_issue_risk": {"type": "string", "enum": ["none", "low", "medium", "high"]},
+            "chain_id": {"type": "integer"},
+            "fork_block": {"type": "integer"},
+            "poc_path": {"type": "string"},
+            "trace_path": {"type": "string"},
+            "forge_result": {"type": "string"},
+            "invariant_test_result": {"type": "string"},
+            "impact_measured": {"type": "boolean"},
+            "profit_measured": {"type": "boolean"},
+            "amount": {"type": "string"},
+            "note": {"type": "string"},
+            "notes": {"type": "array", "items": {"type": "string"}},
+            **WRITE_MODE,
+        }, ["candidate_id"]),
+        handler,
+    )
 
 
 def _build_state_plan(state: EvidenceMCPState) -> Tool:

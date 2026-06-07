@@ -107,6 +107,18 @@ zeropath candidates list
 zeropath candidates show ZP-001
 ```
 
+Record concrete evidence and triage facts:
+
+```bash
+zeropath candidates evidence ZP-001 \
+  --root-cause-lines \
+  --attacker-path \
+  --state-preconditions \
+  --duplicate-risk low \
+  --known-issue-risk none \
+  --live-config-checked
+```
+
 Generate a proof skeleton and run Foundry if available:
 
 ```bash
@@ -148,6 +160,7 @@ Important MCP tools include:
 - `zeropath_ingest_repo`
 - `zeropath_get_protocol_intent`
 - `zeropath_generate_attack_hypotheses`
+- `zeropath_update_candidate_evidence`
 - `zeropath_generate_foundry_poc`
 - `zeropath_run_poc`
 - `zeropath_judge_candidate`
