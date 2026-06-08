@@ -35,7 +35,9 @@ if not hasattr(click, "Exit"):
     click.Exit = click.exceptions.Exit
 
 from zeropath.cli.commands.candidates import candidates as zp_candidates
+from zeropath.cli.commands.judge import judge as zp_judge
 from zeropath.cli.commands.prove import prove as zp_prove
+from zeropath.cli.commands.report import report as zp_report
 from zeropath.config import Settings
 from zeropath.exceptions import GitHubIngestionError, ZeropathError
 from zeropath.logging_config import configure_logging, get_logger
@@ -1419,57 +1421,8 @@ def zp_hunt(repo: Path, mode: str, limit: int, focus: Optional[str]) -> None:
     console.print("[yellow]Hypotheses are not findings. Run `zeropath prove` and `zeropath judge` before reporting.[/yellow]")
 
 
-@cli.command("judge")
-@click.argument("candidate_id")
-@click.option("--repo", type=click.Path(file_okay=False, path_type=Path), default=Path("."), show_default=True)
-def zp_judge(candidate_id: str, repo: Path) -> None:
-    """Run skeptical judge checks for one candidate."""
-    from zeropath.core.judge import judge_candidate
-    from zeropath.core.storage import Storage
-
-    storage = Storage(repo)
-    candidate = storage.load_candidate(candidate_id)
-    if candidate is None:
-        console.print(f"[red]Candidate not found:[/red] {candidate_id}")
-        raise click.Exit(1)
-    result = judge_candidate(candidate, storage)
-    table = Table(title=f"Judge {candidate_id}", show_header=True)
-    table.add_column("Check"); table.add_column("Value")
-    table.add_row("report_ready", str(result.report_ready))
-    table.add_row("severity", result.severity)
-    table.add_row("funds_at_risk", str(result.funds_at_risk))
-    table.add_row("attacker_realistic", str(result.attacker_realistic))
-    table.add_row("state_reachable", str(result.state_reachable))
-    table.add_row("live_config_reachable", str(result.live_config_reachable))
-    table.add_row("blocking", "; ".join(result.blocking_objections) or "none")
-    console.print(table)
-    if result.required_next_steps:
-        console.print("[yellow]Next evidence steps:[/yellow]")
-        for step in result.required_next_steps:
-            console.print(f"- {step}")
-
-
-@cli.command("report")
-@click.argument("candidate_id")
-@click.option("--repo", type=click.Path(file_okay=False, path_type=Path), default=Path("."), show_default=True)
-@click.option("--format", "report_format", type=click.Choice(["code4rena", "sherlock", "cantina", "internal"]), default="code4rena", show_default=True)
-@click.option("--draft", is_flag=True, help="Export a clearly marked draft even if judge has not passed.")
-def zp_report(candidate_id: str, repo: Path, report_format: str, draft: bool) -> None:
-    """Export a judge-gated report."""
-    from zeropath.core.errors import ReportNotReadyError
-    from zeropath.core.reports import export_report
-    from zeropath.core.storage import Storage
-
-    try:
-        path = export_report(Storage(repo), candidate_id, report_format=report_format, draft=draft)
-    except ReportNotReadyError as exc:
-        console.print(f"[red]Report refused:[/red] {exc}")
-        console.print("Use --draft for an explicitly marked draft, or add evidence and rerun judge.")
-        raise click.Exit(1)
-    except Exception as exc:
-        console.print(f"[red]Report failed:[/red] {exc}")
-        raise click.Exit(1)
-    console.print(f"[green]Report exported:[/green] {path}")
+cli.add_command(zp_judge)
+cli.add_command(zp_report)
 
 
 @cli.group("memory")

@@ -4,16 +4,16 @@ from importlib import import_module
 from typing import Any
 
 from zeropath.cli.commands.candidates import candidates
+from zeropath.cli.commands.judge import judge
 from zeropath.cli.commands.prove import prove
+from zeropath.cli.commands.report import report
 
 _COMMAND_MODULES = {
     "hunt": "hunt",
     "ingest": "ingest",
     "init": "init",
-    "judge": "judge",
     "mcp": "mcp",
     "memory": "memory",
-    "report": "report",
     "status": "status",
     "understand": "understand",
 }
