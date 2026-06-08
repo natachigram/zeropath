@@ -25,6 +25,11 @@ def render_foundry_poc(
         indent="        ",
         empty="TODO: define transaction sequence",
     )
+    call_hints = _comment_block(
+        _entrypoint_call_hints(candidate.entrypoints),
+        indent="        ",
+        empty="TODO: map candidate entrypoints to protocol calls",
+    )
     locations = "\n".join(
         f"// - {loc.file}:{loc.line_start or '?'} {loc.contract or ''}.{loc.function or ''}".rstrip()
         for loc in candidate.root_cause_locations
@@ -64,6 +69,9 @@ contract {class_name} is Test {{
     function test_{candidate.id.replace("-", "_")}_hypothesis() public {{
 {sequence}
 
+        // Entrypoint call hints:
+{call_hints}
+
         // TODO: execute calls against the protocol under test.
         // TODO: assert measurable fund impact or invariant violation.
         // Example:
@@ -98,3 +106,55 @@ def _comment_block(items: list[str], *, indent: str, empty: str) -> str:
     if not items:
         return f"{indent}// TODO: {empty}"
     return "\n".join(f"{indent}// TODO: {item}" for item in items)
+
+
+def _entrypoint_call_hints(entrypoints: list[str]) -> list[str]:
+    hints: list[str] = []
+    for entrypoint in entrypoints:
+        parsed = _parse_entrypoint(entrypoint)
+        if parsed is None:
+            hints.append(f"vm.prank(attacker); call `{entrypoint}` with attacker-controlled parameters.")
+            continue
+        name, params = parsed
+        args = ", ".join(_placeholder_arg(param, idx) for idx, param in enumerate(params))
+        call = f"protocol.{name}({args});" if args else f"protocol.{name}();"
+        hints.append(f"vm.prank(attacker); {call}")
+    return hints
+
+
+def _parse_entrypoint(entrypoint: str) -> tuple[str, list[str]] | None:
+    match = re.match(r"^\s*(?P<name>[A-Za-z_][A-Za-z0-9_]*)\((?P<params>.*)\)\s*$", entrypoint)
+    if not match:
+        if re.match(r"^\s*[A-Za-z_][A-Za-z0-9_]*\s*$", entrypoint):
+            return entrypoint.strip(), []
+        return None
+    params = [
+        _clean_param(param)
+        for param in match.group("params").split(",")
+        if param.strip()
+    ]
+    return match.group("name"), params
+
+
+def _clean_param(param: str) -> str:
+    tokens = [token for token in param.strip().split() if token not in {"calldata", "memory", "storage"}]
+    return tokens[0] if tokens else "unknown"
+
+
+def _placeholder_arg(param_type: str, idx: int) -> str:
+    lowered = param_type.lower()
+    if lowered.startswith("address"):
+        return "attacker" if idx == 0 else "victim"
+    if lowered.startswith("uint") or lowered.startswith("int"):
+        return "amount"
+    if lowered == "bool":
+        return "true"
+    if lowered.startswith("bytes") or lowered == "string":
+        return '""'
+    if lowered.endswith("[]"):
+        return f"{_identifier_type(lowered)}Array"
+    return f"arg{idx}"
+
+
+def _identifier_type(param_type: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_]", "_", param_type).strip("_") or "arg"

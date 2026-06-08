@@ -31,3 +31,21 @@ def test_foundry_poc_renders_state_plan_sections():
     assert "underlying asset fixture" in rendered
     assert "TODO: Deploy Vault" in rendered
     assert "TODO: 1. attacker deposits" in rendered
+
+
+def test_foundry_poc_renders_entrypoint_call_hints():
+    candidate = CandidateFinding(
+        id="ZP-021",
+        project_id="demo",
+        title="Entrypoint PoC",
+        attacker_model="Untrusted caller",
+        entrypoints=["deposit(uint256,address)", "redeem(uint256,address,address)", "claim"],
+        impact=Impact(impact_type="direct_theft", funds_at_risk=True, explanation="demo"),
+    )
+
+    rendered = render_foundry_poc(candidate)
+
+    assert "Entrypoint call hints" in rendered
+    assert "TODO: vm.prank(attacker); protocol.deposit(amount, victim);" in rendered
+    assert "TODO: vm.prank(attacker); protocol.redeem(amount, victim, victim);" in rendered
+    assert "TODO: vm.prank(attacker); protocol.claim();" in rendered
