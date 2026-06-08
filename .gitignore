@@ -97,7 +97,7 @@ celerybeat.pid
 
 # Environments
 .env
-.venv
+.venv/
 env/
 venv/
 ENV/
@@ -116,6 +116,7 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+.ruff_cache/
 .dmypy.json
 dmypy.json
 
@@ -131,12 +132,16 @@ dmypy.json
 .DS_Store
 
 # Project specific
+.zeropath/
 output/
 *.sqlite
 *.db
 neo4j-data/
 logs/
 zeropath.log
+out/
+cache/
+broadcast/
 
 # Contracts (optional)
 contracts/vendor/

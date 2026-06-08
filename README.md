@@ -31,33 +31,30 @@ The core rule is simple:
 
 Stable:
 
-- project initialization
-- local project store under `.zeropath`
-- EVM project detection
-- lightweight EVM indexing
-- protocol intent snapshots
-- candidate lifecycle storage
-- evidence ledger fields
+- CLI project initialization
+- EVM/Solidity detection and lightweight indexing
+- protocol understanding snapshot
+- invariant suggestions
+- candidate lifecycle
+- judge-gated reports
 - memory router
-- CLI commands for the evidence-first workflow
-- MCP scaffold and tool wrappers
+- MCP scaffold
 
 Experimental:
 
-- template-driven hypothesis generation
+- heuristic hypothesis generation
 - Foundry PoC skeleton generation
-- skeptical judge engine
-- report export templates
+- old adversarial, simulator, monitor, and RL components
 - Solodit integration placeholder through the older knowledge modules
 
 Planned:
 
 - stronger Solidity parsing
-- vector retrieval
-- full Solodit ingestion
+- real Solodit ingestion
 - live fork validation
-- LSP and VS Code UI
-- Move, Solana, Cairo, and CosmWasm adapters
+- vector retrieval
+- Move, Solana, CosmWasm, and Cairo adapters
+- VS Code/LSP UI
 
 ## Architecture
 
@@ -274,9 +271,13 @@ zeropath hunt --mode critical --limit 5
 zeropath candidates list
 zeropath prove ZP-001 --backend foundry
 zeropath judge ZP-001
-zeropath report ZP-001 --format code4rena --draft
+zeropath report ZP-001 --format code4rena
 zeropath memory rejected
 ```
+
+Older commands such as `analyze`, `infer`, `attack`, `sequence`, `kg`, and
+`contest` are retained only as legacy or experimental compatibility surfaces.
+They are not the recommended workflow for new users or IDE agents.
 
 ## Development
 
