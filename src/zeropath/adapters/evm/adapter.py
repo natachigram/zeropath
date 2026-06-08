@@ -8,6 +8,7 @@ from typing import Any
 from zeropath.adapters.base import LanguageAdapter
 from zeropath.adapters.evm.detector import detect_evm_project
 from zeropath.adapters.evm.forge import run_forge_test
+from zeropath.adapters.evm.foundry import runnable_candidate_test_path
 from zeropath.adapters.evm.invariants import suggest_evm_invariants
 from zeropath.adapters.evm.parser import EVMParser
 from zeropath.adapters.evm.poc_templates import render_foundry_poc
@@ -98,7 +99,7 @@ class EVMAdapter(LanguageAdapter):
     def run_proof(self, candidate: CandidateFinding) -> dict[str, Any]:
         if not self.root_path:
             return {"ok": False, "status": "unavailable", "message": "adapter root path is unknown"}
-        return run_forge_test(self.root_path, candidate.evidence.poc_path)
+        return run_forge_test(self.root_path, runnable_candidate_test_path(self.root_path, candidate))
 
     def get_supported_backends(self) -> list[str]:
         return ["foundry"]

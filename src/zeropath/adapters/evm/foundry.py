@@ -26,6 +26,17 @@ def candidate_test_path(root_path: str | Path, candidate: CandidateFinding) -> P
     return base / "zeropath" / f"{candidate.id.replace('-', '_')}.t.sol"
 
 
+def runnable_candidate_test_path(root_path: str | Path, candidate: CandidateFinding) -> Path | None:
+    path = candidate_test_path(root_path, candidate)
+    if path.exists():
+        return path
+    if candidate.evidence.poc_path:
+        artifact = Path(candidate.evidence.poc_path)
+        if artifact.exists():
+            return artifact
+    return None
+
+
 def write_candidate_test(
     root_path: str | Path,
     candidate: CandidateFinding,

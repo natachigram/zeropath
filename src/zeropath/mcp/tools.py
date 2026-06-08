@@ -372,6 +372,7 @@ def _run_poc(state: EvidenceMCPState) -> Tool:
         log_tool_call(repo, "zeropath_run_poc", args)
         try:
             from zeropath.adapters.evm.forge import run_forge_test
+            from zeropath.adapters.evm.foundry import runnable_candidate_test_path
 
             storage = _storage(repo)
             candidate = storage.load_candidate(args["candidate_id"])
@@ -379,7 +380,7 @@ def _run_poc(state: EvidenceMCPState) -> Tool:
                 return _err("candidate not found")
             if args.get("backend", "foundry") != "foundry":
                 return _err("only foundry backend is currently supported")
-            result = run_forge_test(repo)
+            result = run_forge_test(repo, runnable_candidate_test_path(repo, candidate))
             candidate.evidence.forge_result = result.get("status")
             candidate.evidence.notes.append(result.get("message") or f"forge test status: {result.get('status')}")
             if result.get("status") == "passed":

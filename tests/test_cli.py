@@ -172,9 +172,44 @@ def test_prove_uses_saved_state_plan_in_generated_poc(tmp_path):
     assert "TODO: Materialize required state: vault seeded" in poc
 
 
+def test_prove_runs_generated_candidate_test_path(tmp_path, monkeypatch):
+    storage = Storage(tmp_path)
+    storage.initialize(ProjectConfig(project_id="demo", root_path=str(tmp_path), adapter="evm"))
+    storage.save_candidate(
+        CandidateFinding(
+            id="ZP-019",
+            project_id="demo",
+            title="Runnable proof target",
+            attacker_model="Untrusted depositor",
+            required_state=["vault seeded"],
+            transaction_sequence=["deposit", "redeem"],
+            impact=Impact(impact_type="direct_theft", funds_at_risk=True, explanation="demo"),
+        )
+    )
+    (tmp_path / "test").mkdir()
+    calls = {}
+
+    def fake_run_forge_test(root_path, match_path=None):
+        calls["root_path"] = root_path
+        calls["match_path"] = match_path
+        return {"ok": True, "status": "passed", "message": "scoped forge test passed"}
+
+    monkeypatch.setattr("zeropath.adapters.evm.forge.run_forge_test", fake_run_forge_test)
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["prove", "ZP-019", "--repo", str(tmp_path), "--write-test-dir"])
+
+    assert result.exit_code == 0, result.output
+    expected = tmp_path / "test" / "zeropath" / "ZP_019.t.sol"
+    assert expected.exists()
+    assert Path(calls["match_path"]) == expected
+    assert storage.load_candidate("ZP-019").status == "poc_passed"
+
+
 def test_cli_package_layout_exports_evidence_commands():
     from zeropath.cli import cli as package_cli
     from zeropath.cli import main as package_main
+    from zeropath.cli.commands import judge, report
 
     assert package_cli is cli
     assert callable(package_main)
@@ -198,3 +233,6 @@ def test_cli_package_layout_exports_evidence_commands():
         command = getattr(importlib.import_module(module_name), attr)
         assert command.name == command_name
         assert package_cli.commands[command_name] is command
+
+    assert judge is package_cli.commands["judge"]
+    assert report is package_cli.commands["report"]
