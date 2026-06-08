@@ -19,7 +19,6 @@ from zeropath.adapters.evm.solidity_models import (
 )
 from zeropath.core.utils import safe_relpath
 
-
 CONTRACT_RE = re.compile(r"\b(contract|interface|library)\s+([A-Za-z_][A-Za-z0-9_]*)")
 FUNCTION_RE = re.compile(r"\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)\s*\((.*?)\)\s*([^;{]*)", re.S)
 MODIFIER_RE = re.compile(r"\bmodifier\s+([A-Za-z_][A-Za-z0-9_]*)\b")
@@ -30,6 +29,14 @@ STATE_VAR_RE = re.compile(
     r"(?:(?:public|private|internal|external|constant|immutable)\s+)*"
     r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?:=|;)",
     re.M,
+)
+EXTERNAL_CALL_RE = re.compile(
+    r"(?P<target>"
+    r"(?:[A-Za-z_][A-Za-z0-9_]*\s*\([^;\n{}]*?\)|[A-Za-z_][A-Za-z0-9_]*)"
+    r")\s*\.\s*"
+    r"(?P<callee>[A-Za-z_][A-Za-z0-9_]*)"
+    r"\s*(?P<options>\{[^;\n{}]*\})?\s*\(",
+    re.S,
 )
 
 VISIBILITIES = {"public", "external", "internal", "private"}
@@ -63,7 +70,19 @@ ROLE_TERMS = (
     "hasRole",
     "DEFAULT_ADMIN_ROLE",
 )
-ORACLE_TERMS = ("latestRoundData", "getPrice", "price", "oracle", "twap", "Chainlink", "sequencer", "stale", "heartbeat")
+ORACLE_TERMS = (
+    "latestRoundData",
+    "getPrice",
+    "price",
+    "oracle",
+    "twap",
+    "Chainlink",
+    "sequencer",
+    "stale",
+    "heartbeat",
+)
+BUILTIN_CALL_TARGETS = {"abi", "console", "super", "type", "vm"}
+LOW_LEVEL_CALLS = {"call", "delegatecall", "staticcall", "send"}
 
 
 class EVMParser:
@@ -75,10 +94,16 @@ class EVMParser:
         file_indexes = [self.parse_file(path, root) for path in files]
         contracts = [c.model_dump() for file_index in file_indexes for c in file_index.contracts]
         functions = [f.model_dump() for file_index in file_indexes for f in file_index.functions]
-        state_variables = [item for file_index in file_indexes for item in file_index.state_variables]
+        state_variables = [
+            item for file_index in file_indexes for item in file_index.state_variables
+        ]
         asset_flows = [item for file_index in file_indexes for item in file_index.asset_flows]
+        external_calls = [item for file_index in file_indexes for item in file_index.external_calls]
         signals = sorted({signal for file_index in file_indexes for signal in file_index.signals})
-        raw_signal_text = [Path(root / file_index.path).read_text(encoding="utf-8", errors="ignore")[:20000] for file_index in file_indexes[:20]]
+        raw_signal_text = [
+            Path(root / file_index.path).read_text(encoding="utf-8", errors="ignore")[:20000]
+            for file_index in file_indexes[:20]
+        ]
         protocol_type = infer_protocol_type(functions, state_variables, " ".join(raw_signal_text))
         return {
             "adapter": "evm",
@@ -88,6 +113,7 @@ class EVMParser:
             "functions": functions,
             "state_variables": state_variables,
             "asset_flows": asset_flows,
+            "external_calls": external_calls,
             "roles": extract_roles(raw_signal_text, functions),
             "external_dependencies": extract_external_dependencies(file_indexes),
             "signals": signals,
@@ -120,6 +146,7 @@ class EVMParser:
             functions=functions,
             state_variables=self._state_variables(text, rel),
             asset_flows=detect_asset_flows(lines, file=rel),
+            external_calls=_external_calls_for_functions(text, rel, functions),
             signals=_signals(text),
         )
 
@@ -136,7 +163,9 @@ class EVMParser:
             )
         return contracts
 
-    def _functions(self, text: str, rel: str, contracts: list[SolidityContract]) -> list[SolidityFunction]:
+    def _functions(
+        self, text: str, rel: str, contracts: list[SolidityContract]
+    ) -> list[SolidityFunction]:
         regions = _contract_regions(text, contracts)
         functions: list[SolidityFunction] = []
         for contract, start, end in regions:
@@ -146,8 +175,12 @@ class EVMParser:
                 suffix = match.group(3) or ""
                 words = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", suffix)
                 visibility = next((word for word in words if word in VISIBILITIES), "unknown")
-                modifiers = [word for word in words if word not in FUNCTION_QUALIFIERS and word != name]
+                modifiers = [
+                    word for word in words if word not in FUNCTION_QUALIFIERS and word != name
+                ]
                 absolute_start = start + match.start()
+                body_end = _function_body_end(body, match.end())
+                absolute_end = start + (body_end if body_end is not None else match.end())
                 functions.append(
                     SolidityFunction(
                         name=name,
@@ -156,7 +189,7 @@ class EVMParser:
                         visibility=visibility,
                         modifiers=modifiers,
                         line_start=_line_of(text, absolute_start),
-                        line_end=_line_of(text, start + match.end()),
+                        line_end=_line_of(text, absolute_end),
                         raw_signature=" ".join(match.group(0).split()),
                     )
                 )
@@ -167,7 +200,9 @@ class EVMParser:
         for match in STATE_VAR_RE.finditer(text):
             line = text[text.rfind("\n", 0, match.start()) + 1 : text.find("\n", match.start())]
             stripped = line.strip()
-            if not stripped or stripped.startswith(("function ", "event ", "import ", "pragma ", "return ", "if ", "for ", "while ")):
+            if not stripped or stripped.startswith(
+                ("function ", "event ", "import ", "pragma ", "return ", "if ", "for ", "while ")
+            ):
                 continue
             if "(" in stripped and ")" in stripped and "mapping" not in stripped:
                 continue
@@ -188,14 +223,25 @@ def infer_protocol_type(functions: list[dict], variables: list[dict], text: str)
     var_text = " ".join(f"{v.get('name', '')} {v.get('type', '')}" for v in variables).lower()
     corpus = f"{names} {var_text} {text.lower()}"
     scores = {
-        "vault": _score(corpus, ("deposit", "withdraw", "redeem", "totalassets", "totalsupply", "shares")),
-        "lending": _score(corpus, ("borrow", "repay", "liquidate", "collateral", "debt", "healthfactor", "ltv")),
+        "vault": _score(
+            corpus, ("deposit", "withdraw", "redeem", "totalassets", "totalsupply", "shares")
+        ),
+        "lending": _score(
+            corpus, ("borrow", "repay", "liquidate", "collateral", "debt", "healthfactor", "ltv")
+        ),
         "amm": _score(corpus, ("swap", "reserve", "pool", "liquidity", "tick", "sqrtprice")),
-        "bridge": _score(corpus, ("message", "domain", "chainid", "nonce", "replay", "release", "lock", "sendmessage")),
-        "staking/rewards": _score(corpus, ("rewardpertoken", "rewarddebt", "accreward", "claim", "stake", "unstake")),
+        "bridge": _score(
+            corpus,
+            ("message", "domain", "chainid", "nonce", "replay", "release", "lock", "sendmessage"),
+        ),
+        "staking/rewards": _score(
+            corpus, ("rewardpertoken", "rewarddebt", "accreward", "claim", "stake", "unstake")
+        ),
         "governance": _score(corpus, ("proposal", "vote", "quorum", "timelock", "execute")),
         "oracle": _score(corpus, ("latestrounddata", "getprice", "oracle", "twap", "heartbeat")),
-        "account abstraction/paymaster": _score(corpus, ("paymaster", "useroperation", "entrypoint", "validatepaymasteruserop")),
+        "account abstraction/paymaster": _score(
+            corpus, ("paymaster", "useroperation", "entrypoint", "validatepaymasteruserop")
+        ),
     }
     best, score = max(scores.items(), key=lambda item: item[1])
     return best if score > 0 else "unknown"
@@ -251,6 +297,20 @@ def extract_external_dependencies(files: list[SolidityFileIndex]) -> list[dict]:
                         "source": file_index.path,
                     },
                 )
+        for call in file_index.external_calls:
+            target = call.get("target")
+            if not target or target in {"this", "address(this)"}:
+                continue
+            deps.setdefault(
+                target,
+                {
+                    "name": target,
+                    "dependency_type": "external_call_target",
+                    "description": f"Heuristic external call target via {call.get('callee', 'unknown')}().",
+                    "trust_assumption": "Target behavior and callbacks must be verified before reporting.",
+                    "source": f"{call.get('file')}:{call.get('line')}",
+                },
+            )
     return list(deps.values())
 
 
@@ -261,7 +321,12 @@ def _signals(text: str) -> list[str]:
         signals.append("oracle")
     if any(term.lower() in lower for term in ROLE_TERMS):
         signals.append("access_control")
-    if "initializer" in lower or "upgradeable" in lower or "proxy" in lower or "delegatecall" in lower:
+    if (
+        "initializer" in lower
+        or "upgradeable" in lower
+        or "proxy" in lower
+        or "delegatecall" in lower
+    ):
         signals.append("upgradeable")
     if any(term in lower for term in ("transfer(", "safetransfer(", "transferfrom(")):
         signals.append("token_transfer")
@@ -270,7 +335,9 @@ def _signals(text: str) -> list[str]:
     return signals
 
 
-def _contract_regions(text: str, contracts: list[SolidityContract]) -> list[tuple[SolidityContract, int, int]]:
+def _contract_regions(
+    text: str, contracts: list[SolidityContract]
+) -> list[tuple[SolidityContract, int, int]]:
     matches = list(CONTRACT_RE.finditer(text))
     regions: list[tuple[SolidityContract, int, int]] = []
     for idx, match in enumerate(matches):
@@ -281,12 +348,122 @@ def _contract_regions(text: str, contracts: list[SolidityContract]) -> list[tupl
 
 
 def _modifiers_for_contract(text: str, contract_name: str) -> list[str]:
-    contract_match = re.search(rf"\b(?:contract|interface|library)\s+{re.escape(contract_name)}\b", text)
+    contract_match = re.search(
+        rf"\b(?:contract|interface|library)\s+{re.escape(contract_name)}\b", text
+    )
     if not contract_match:
         return []
     next_match = CONTRACT_RE.search(text, contract_match.end())
     region = text[contract_match.start() : next_match.start() if next_match else len(text)]
     return [match.group(1) for match in MODIFIER_RE.finditer(region)]
+
+
+def _external_calls_for_functions(
+    text: str,
+    rel: str,
+    functions: list[SolidityFunction],
+) -> list[dict]:
+    calls: list[dict] = []
+    seen: set[tuple[str, str, str, int]] = set()
+    for fn in functions:
+        if fn.line_start is None or fn.line_end is None:
+            continue
+        body_start, body_end = _line_offsets(text, fn.line_start, fn.line_end)
+        body = text[body_start:body_end]
+        for match in EXTERNAL_CALL_RE.finditer(body):
+            target = _normalize_call_target(match.group("target"))
+            callee = match.group("callee")
+            if _skip_external_call(target, callee):
+                continue
+            absolute_offset = body_start + match.start()
+            line = _line_of(text, absolute_offset)
+            key = (f"{fn.contract}.{fn.name}", target, callee, line)
+            if key in seen:
+                continue
+            seen.add(key)
+            calls.append(
+                {
+                    "caller": f"{fn.contract}.{fn.name}",
+                    "caller_contract": fn.contract,
+                    "caller_function": fn.name,
+                    "target": target,
+                    "callee": callee,
+                    "signature_hint": f"{target}.{callee}(...)",
+                    "call_type": (
+                        "low_level_call" if callee in LOW_LEVEL_CALLS else "external_member_call"
+                    ),
+                    "value_transfer": _call_transfers_value(callee, match.group("options") or ""),
+                    "file": rel,
+                    "line": line,
+                    "snippet": _line_snippet(text, absolute_offset),
+                    "confidence": "low",
+                }
+            )
+    return calls
+
+
+def _function_body_end(contract_region: str, header_end: int) -> int | None:
+    semicolon = contract_region.find(";", header_end)
+    open_brace = contract_region.find("{", header_end)
+    if open_brace == -1 or (semicolon != -1 and semicolon < open_brace):
+        return None
+    return _matching_brace(contract_region, open_brace)
+
+
+def _matching_brace(text: str, open_brace: int) -> int:
+    depth = 0
+    for idx in range(open_brace, len(text)):
+        char = text[idx]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return idx + 1
+    return len(text)
+
+
+def _line_offsets(text: str, line_start: int, line_end: int) -> tuple[int, int]:
+    start = 0
+    current_line = 1
+    while current_line < line_start:
+        newline = text.find("\n", start)
+        if newline == -1:
+            return len(text), len(text)
+        start = newline + 1
+        current_line += 1
+    end = start
+    while current_line <= line_end:
+        newline = text.find("\n", end)
+        if newline == -1:
+            return start, len(text)
+        end = newline + 1
+        current_line += 1
+    return start, end
+
+
+def _normalize_call_target(target: str) -> str:
+    return re.sub(r"\s+", "", target)
+
+
+def _skip_external_call(target: str, callee: str) -> bool:
+    if target in BUILTIN_CALL_TARGETS:
+        return True
+    if callee in {"encodeWithSelector", "encodeWithSignature", "decode"}:
+        return True
+    return False
+
+
+def _call_transfers_value(callee: str, options: str) -> bool:
+    return callee == "send" or "value" in options.lower()
+
+
+def _line_snippet(text: str, offset: int) -> str:
+    start = text.rfind("\n", 0, offset) + 1
+    end = text.find("\n", offset)
+    if end == -1:
+        end = len(text)
+    return text[start:end].strip()[:220]
 
 
 def _line_of(text: str, offset: int) -> int:

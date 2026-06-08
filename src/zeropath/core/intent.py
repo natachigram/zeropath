@@ -38,15 +38,19 @@ def build_protocol_intent(storage: Storage) -> ProtocolIntent:
         )
         for dep in index.get("external_dependencies", [])
     ]
-    boundaries = [
-        TrustBoundary(
-            name="External calls",
-            boundary_type="contract_call",
-            description="Calls or token transfers cross out of the indexed codebase.",
-            risk="Asset movement and callbacks require proof when used in exploit hypotheses.",
-            source="evm heuristic",
-        )
-    ] if dependencies or index.get("asset_flows") else []
+    boundaries = (
+        [
+            TrustBoundary(
+                name="External calls",
+                boundary_type="contract_call",
+                description="Calls or token transfers cross out of the indexed codebase.",
+                risk="Asset movement and callbacks require proof when used in exploit hypotheses.",
+                source="evm heuristic",
+            )
+        ]
+        if dependencies or index.get("asset_flows") or index.get("external_calls")
+        else []
+    )
     invariants = invariants_for_protocol_type(protocol_type, contracts)
     summary = _summary(protocol_type, contracts, index)
     intent = ProtocolIntent(

@@ -50,16 +50,35 @@ class EVMAdapter(LanguageAdapter):
 
     def extract_entrypoints(self) -> list[dict[str, Any]]:
         return [
-            fn for fn in (self._index or {}).get("functions", [])
+            fn
+            for fn in (self._index or {}).get("functions", [])
             if fn.get("visibility") in {"public", "external"}
         ]
 
     def build_call_graph(self) -> dict[str, Any]:
+        external_calls = list((self._index or {}).get("external_calls", []))
+        edges = [
+            {
+                "from": call.get("caller"),
+                "to": f"{call.get('target')}.{call.get('callee')}",
+                "type": call.get("call_type", "external_member_call"),
+                "file": call.get("file"),
+                "line": call.get("line"),
+                "value_transfer": bool(call.get("value_transfer")),
+                "confidence": call.get("confidence", "low"),
+                "snippet": call.get("snippet"),
+            }
+            for call in external_calls
+        ]
         return {
             "confidence": "low",
             "nodes": self.extract_entrypoints(),
-            "edges": [],
-            "unknowns": ["Regex adapter does not resolve internal/external calls yet."],
+            "edges": edges,
+            "external_calls": external_calls,
+            "unknowns": [
+                "Regex adapter does not resolve inheritance, dynamic dispatch, or runtime reachability.",
+                "External-call edges are heuristic and require proof before reporting.",
+            ],
         }
 
     def build_state_graph(self) -> dict[str, Any]:
@@ -99,7 +118,9 @@ class EVMAdapter(LanguageAdapter):
     def run_proof(self, candidate: CandidateFinding) -> dict[str, Any]:
         if not self.root_path:
             return {"ok": False, "status": "unavailable", "message": "adapter root path is unknown"}
-        return run_forge_test(self.root_path, runnable_candidate_test_path(self.root_path, candidate))
+        return run_forge_test(
+            self.root_path, runnable_candidate_test_path(self.root_path, candidate)
+        )
 
     def get_supported_backends(self) -> list[str]:
         return ["foundry"]

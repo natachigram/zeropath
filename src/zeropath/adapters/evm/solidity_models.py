@@ -33,4 +33,5 @@ class SolidityFileIndex(BaseModel):
     functions: list[SolidityFunction] = Field(default_factory=list)
     state_variables: list[dict] = Field(default_factory=list)
     asset_flows: list[dict] = Field(default_factory=list)
+    external_calls: list[dict] = Field(default_factory=list)
     signals: list[str] = Field(default_factory=list)
