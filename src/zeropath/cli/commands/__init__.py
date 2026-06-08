@@ -4,6 +4,7 @@ from importlib import import_module
 from typing import Any
 
 from zeropath.cli.commands.candidates import candidates
+from zeropath.cli.commands.prove import prove
 
 _COMMAND_MODULES = {
     "hunt": "hunt",
@@ -12,7 +13,6 @@ _COMMAND_MODULES = {
     "judge": "judge",
     "mcp": "mcp",
     "memory": "memory",
-    "prove": "prove",
     "report": "report",
     "status": "status",
     "understand": "understand",
