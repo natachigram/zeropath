@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
+
+from zeropath.core.schemas import CandidateFinding
+from zeropath.core.storage import Storage
 
 
 def forge_available() -> bool:
@@ -39,6 +43,26 @@ def run_forge_test(root_path: str | Path, match_path: str | Path | None = None) 
         "stdout": result.stdout[-12000:],
         "stderr": result.stderr[-12000:],
     }
+
+
+def save_forge_trace(storage: Storage, candidate: CandidateFinding, result: dict[str, Any]) -> Path:
+    payload = {
+        "candidate_id": candidate.id,
+        "backend": "foundry",
+        "status": result.get("status"),
+        "ok": result.get("ok"),
+        "returncode": result.get("returncode"),
+        "command": result.get("command"),
+        "match_path": result.get("match_path"),
+        "message": result.get("message"),
+        "stdout": result.get("stdout"),
+        "stderr": result.get("stderr"),
+    }
+    return storage.append_artifact(
+        Path("traces") / f"{candidate.id.replace('-', '_')}_forge_result.json",
+        json.dumps(payload, indent=2, sort_keys=True),
+        overwrite=True,
+    )
 
 
 def _normalize_match_path(root_path: Path, match_path: str | Path) -> str:

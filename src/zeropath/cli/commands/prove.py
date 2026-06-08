@@ -21,7 +21,7 @@ console = Console()
 def prove(candidate_id: str, repo: Path, backend: str, write_test_dir: bool, force: bool, run: bool) -> None:
     """Generate a candidate proof skeleton and optionally run a backend."""
     from zeropath.adapters.evm import EVMAdapter
-    from zeropath.adapters.evm.forge import run_forge_test
+    from zeropath.adapters.evm.forge import run_forge_test, save_forge_trace
     from zeropath.adapters.evm.foundry import runnable_candidate_test_path, write_candidate_test
     from zeropath.core.state_plan import get_or_build_candidate_state_plan
     from zeropath.core.storage import Storage
@@ -54,6 +54,7 @@ def prove(candidate_id: str, repo: Path, backend: str, write_test_dir: bool, for
     if run and backend == "foundry":
         result = run_forge_test(repo, runnable_candidate_test_path(repo, candidate))
         candidate.evidence.forge_result = result.get("status")
+        candidate.evidence.trace_path = str(save_forge_trace(storage, candidate, result))
         candidate.evidence.notes.append(result.get("message") or f"forge test status: {result.get('status')}")
         if result.get("status") == "passed":
             candidate.status = "poc_passed"

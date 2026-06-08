@@ -1,4 +1,5 @@
 import importlib
+import json
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -194,7 +195,15 @@ def test_prove_runs_generated_candidate_test_path(tmp_path, monkeypatch):
     def fake_run_forge_test(root_path, match_path=None):
         calls["root_path"] = root_path
         calls["match_path"] = match_path
-        return {"ok": True, "status": "passed", "message": "scoped forge test passed"}
+        return {
+            "ok": True,
+            "status": "passed",
+            "message": "scoped forge test passed",
+            "command": ["forge", "test", "--match-path", str(match_path)],
+            "match_path": str(match_path),
+            "stdout": "proof ok",
+            "stderr": "",
+        }
 
     monkeypatch.setattr("zeropath.adapters.evm.forge.run_forge_test", fake_run_forge_test)
     runner = CliRunner()
@@ -205,7 +214,12 @@ def test_prove_runs_generated_candidate_test_path(tmp_path, monkeypatch):
     expected = tmp_path / "test" / "zeropath" / "ZP_019.t.sol"
     assert expected.exists()
     assert Path(calls["match_path"]) == expected
-    assert storage.load_candidate("ZP-019").status == "poc_passed"
+    candidate = storage.load_candidate("ZP-019")
+    assert candidate.status == "poc_passed"
+    assert candidate.evidence.trace_path
+    trace = json.loads(Path(candidate.evidence.trace_path).read_text())
+    assert trace["status"] == "passed"
+    assert trace["stdout"] == "proof ok"
 
 
 def test_memory_refresh_stale_command_marks_changed_source_memory(tmp_path):
