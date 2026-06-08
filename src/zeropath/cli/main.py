@@ -1,21 +1,4 @@
-"""
-Command-line interface for ZeroPath.
-
-Commands:
-  analyze       Analyze contracts from a local path or GitHub URL.
-  infer         Run Phase 2 invariant inference on a protocol graph.
-  attack        Run Phase 3 adversarial swarm on an invariant report.
-  sequence      Run Phase 4 transaction sequence + PoC generation.
-  diff          Compare two versions of a protocol.
-  import-graph  Load a saved JSON graph into Neo4j.
-  query         Interactive Cypher query shell against Neo4j.
-
-GitHub URL formats accepted:
-  https://github.com/owner/repo
-  https://github.com/owner/repo/tree/branch
-  https://github.com/owner/repo/tree/branch/path/to/contracts
-  owner/repo  (shorthand)
-"""
+"""Command-line interface for ZeroPath."""
 
 import json
 import re
@@ -76,6 +59,24 @@ _GITHUB_URL_RE = re.compile(
 _ETH_ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
 
 
+def _warn_legacy_command(command: str, recommended: str) -> None:
+    click.echo(
+        "[zeropath] Legacy command "
+        f"`{command}` is deprecated for the evidence-first workflow. "
+        f"Prefer `{recommended}`.",
+        err=True,
+    )
+
+
+def _warn_experimental_command(command: str, recommended: str) -> None:
+    click.echo(
+        "[zeropath] Experimental command "
+        f"`{command}` is outside the stable evidence-first workflow. "
+        f"Prefer `{recommended}` unless you are intentionally testing legacy research code.",
+        err=True,
+    )
+
+
 # ---------------------------------------------------------------------------
 # CLI group
 # ---------------------------------------------------------------------------
@@ -86,7 +87,21 @@ _ETH_ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
 @click.option("--log-file", type=Path, default=None, help="Write logs to file.")
 @click.pass_context
 def cli(ctx: click.Context, log_level: str, log_file: Optional[Path]) -> None:
-    """ZeroPath — production-grade smart contract protocol analyzer."""
+    """ZeroPath - evidence-first smart contract security research.
+
+    Recommended workflow:
+
+    - zeropath init
+    - zeropath ingest
+    - zeropath understand
+    - zeropath hunt
+    - zeropath prove
+    - zeropath judge
+    - zeropath report
+
+    Legacy graph, swarm, contest, Neo4j, and KG commands are compatibility
+    or experimental surfaces, not the recommended workflow.
+    """
     configure_logging(log_level=log_level, log_file=log_file)
     ctx.ensure_object(dict)
     ctx.obj["settings"] = Settings()
@@ -107,7 +122,7 @@ cli.add_command(zp_understand)
 # ---------------------------------------------------------------------------
 
 
-@cli.command()
+@cli.command(short_help="[legacy] Analyze contracts into a protocol graph.")
 @click.argument("source")
 @click.option(
     "--output", "-o",
@@ -164,6 +179,7 @@ def analyze(
       - GitHub shorthand: owner/repo
       - A contract address: 0x1234...abcd  (fetches verified source on-chain)
     """
+    _warn_legacy_command("analyze", "zeropath ingest --repo . then zeropath understand")
     settings: Settings = ctx.obj["settings"]
     tmp_dir: Optional[Path] = None
 
@@ -223,7 +239,7 @@ def analyze(
 # ---------------------------------------------------------------------------
 
 
-@cli.command()
+@cli.command(short_help="[legacy] Infer invariants from a saved graph.")
 @click.argument("graph_file", type=Path)
 @click.option(
     "--output", "-o",
@@ -263,6 +279,7 @@ def infer(
         zeropath analyze ./contracts -o output/graph.json
         zeropath infer output/graph.json -n "MyProtocol" -o output/invariants.json
     """
+    _warn_legacy_command("infer", "zeropath understand")
     from zeropath.invariants import InvariantInferenceEngine
     from zeropath.invariants.models import InvariantSeverity
 
@@ -349,7 +366,7 @@ def _display_invariant_summary(report: "InvariantReport", min_level: int, levels
 # ---------------------------------------------------------------------------
 
 
-@cli.command()
+@cli.command(short_help="[legacy] Run the old adversarial swarm.")
 @click.argument("invariants_file", type=Path)
 @click.argument("graph_file", type=Path)
 @click.option(
@@ -408,6 +425,7 @@ def attack(
         zeropath infer output/graph.json -n "MyProtocol" -o output/invariants.json
         zeropath attack output/invariants.json output/graph.json -o output/attack_report.json
     """
+    _warn_legacy_command("attack", "zeropath hunt --mode critical")
     from zeropath.adversarial import SwarmOrchestrator
     from zeropath.invariants.models import InvariantReport
 
@@ -506,7 +524,7 @@ def _display_attack_summary(swarm_report: "SwarmReport", min_confidence: float) 
 # ---------------------------------------------------------------------------
 
 
-@cli.command()
+@cli.command(short_help="[legacy] Generate old sequence/PoC artifacts.")
 @click.argument("attack_file", type=Path)
 @click.argument("graph_file", type=Path)
 @click.option(
@@ -555,6 +573,7 @@ def sequence(
         zeropath attack output/invariants.json output/graph.json -o output/attack_report.json
         zeropath sequence output/attack_report.json output/graph.json -o output/sequences/
     """
+    _warn_legacy_command("sequence", "zeropath candidates plan <ID> then zeropath prove <ID>")
     from zeropath.adversarial.models import SwarmReport
     from zeropath.sequencer import SequenceOrchestrator, TestFramework
 
@@ -658,7 +677,7 @@ def _display_sequence_summary(seq_report: "SequenceReport") -> None:
 # ---------------------------------------------------------------------------
 
 
-@cli.command()
+@cli.command(short_help="[legacy] Compare two protocol versions.")
 @click.argument("source_v1")
 @click.argument("source_v2")
 @click.option("--output", "-o", type=Path, default=Path("output/diff.json"), show_default=True)
@@ -676,6 +695,7 @@ def diff(
 
     SOURCE_V1 and SOURCE_V2 accept the same formats as the analyze command.
     """
+    _warn_legacy_command("diff", "zeropath ingest --repo . then evidence-first review")
     settings: Settings = ctx.obj["settings"]
     try:
         path_v1 = _resolve_source(source_v1, settings)
@@ -732,7 +752,7 @@ def diff(
 # ---------------------------------------------------------------------------
 
 
-@cli.command("import-graph")
+@cli.command("import-graph", short_help="[legacy] Import an old graph into Neo4j.")
 @click.argument("graph_file", type=Path)
 @click.option("--neo4j-uri", default=None)
 @click.option("--neo4j-user", default=None)
@@ -748,6 +768,7 @@ def import_graph(
     clear_db: bool,
 ) -> None:
     """Load a saved protocol graph JSON into Neo4j."""
+    _warn_legacy_command("import-graph", "zeropath ingest --repo .")
     settings: Settings = ctx.obj["settings"]
     try:
         with open(graph_file, "r", encoding="utf-8") as f:
@@ -770,7 +791,7 @@ def import_graph(
 # ---------------------------------------------------------------------------
 
 
-@cli.command()
+@cli.command(short_help="[legacy] Open the old Neo4j query shell.")
 @click.option("--neo4j-uri", default=None)
 @click.option("--neo4j-user", default=None)
 @click.option("--neo4j-password", default=None)
@@ -782,6 +803,7 @@ def query(
     neo4j_password: Optional[str],
 ) -> None:
     """Interactive Cypher query shell against Neo4j."""
+    _warn_legacy_command("query", "zeropath memory search <query>")
     settings: Settings = ctx.obj["settings"]
     db = Neo4jGraphDB(
         uri=neo4j_uri or settings.neo4j_uri,
@@ -1071,7 +1093,7 @@ def _display_query_results(results: list[dict]) -> None:
     console.print(table)
 
 
-@cli.command()
+@cli.command(short_help="[experimental] Run the old contest pipeline.")
 @click.argument(
     "repo_path",
     type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path),
@@ -1162,7 +1184,7 @@ def contest(
     no_foundry: bool,
     no_contrarian: bool,
 ) -> None:
-    """Run the contest-winning pipeline against a target repo.
+    """Run the experimental contest pipeline against a target repo.
 
     Examples::
 
@@ -1173,6 +1195,7 @@ def contest(
             --confidence-threshold 0.70 \\
             -o output/cantina-submissions.json
     """
+    _warn_experimental_command("contest", "zeropath ingest --repo . then zeropath hunt")
     import json as _json
 
     from zeropath.contest import (
@@ -1315,10 +1338,11 @@ cli.add_command(zp_report)
 # ---------------------------------------------------------------------------
 
 
-@cli.group()
+@cli.group(short_help="[legacy] Manage the old KG corpus store.")
 @click.pass_context
 def kg(ctx: click.Context) -> None:
     """Manage the Phase 8 knowledge graph (ingest contest corpora, dump, query)."""
+    _warn_legacy_command("kg", "zeropath memory")
 
 
 def _load_or_init_kg(kg_dir: Optional[Path]):

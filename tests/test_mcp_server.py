@@ -18,10 +18,8 @@ Coverage:
 from __future__ import annotations
 
 import json
-import os
 from io import StringIO
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -30,32 +28,30 @@ from zeropath.core.schemas import CandidateFinding, Impact, ProjectConfig
 from zeropath.core.state_plan import build_candidate_state_plan
 from zeropath.core.storage import Storage
 from zeropath.core.utils import sha256_file
+from zeropath.mcp import build_server as build_evidence_server
+from zeropath.mcp.permissions import log_tool_call, redact, workspace_path
 from zeropath.mcp_server import (
+    PROTOCOL_VERSION,
+    SERVER_NAME,
+    SERVER_VERSION,
+    SUPPORTED_CLIENTS,
     JsonRpcError,
     JsonRpcRequest,
     JsonRpcResponse,
     MCPServer,
-    PROTOCOL_VERSION,
     Prompt,
     ProtocolError,
     Resource,
     ResourceTemplate,
-    ServerState,
-    SERVER_NAME,
-    SERVER_VERSION,
     StdioTransport,
-    SUPPORTED_CLIENTS,
     Tool,
     build_default_server,
     install_for_client,
     parse_message,
-    register_default_tools,
     serialize,
     uninstall_for_client,
 )
-from zeropath.mcp.permissions import log_tool_call, redact, workspace_path
-from zeropath.mcp_server.server import _match_template, _coerce_tool_content
-
+from zeropath.mcp_server.server import _coerce_tool_content, _match_template
 
 # ===========================================================================
 # Helpers
@@ -169,7 +165,8 @@ class TestStdioTransport:
         pipe = _Pipe()
         t = _mk_transport(pipe)
         t.log("hello")
-        pipe.stdout.seek(0); pipe.stderr.seek(0)
+        pipe.stdout.seek(0)
+        pipe.stderr.seek(0)
         assert pipe.stdout.read() == ""
         assert "hello" in pipe.stderr.read()
 
@@ -493,6 +490,15 @@ class TestBuildDefaultServer:
         assert "contest_audit" in server.prompts
         assert "spec_extract" in server.prompts
         assert "contrarian_review" in server.prompts
+
+    def test_canonical_mcp_module_exposes_evidence_only_tools(self, tmp_path):
+        server = build_evidence_server(workspace_root=tmp_path)
+        assert "zeropath_project_status" in server.tools
+        assert "zeropath_ingest_repo" in server.tools
+        assert "zeropath_judge_candidate" in server.tools
+        assert "analyze_protocol" not in server.tools
+        assert server.resources == {}
+        assert server.prompts == {}
 
 
 # ===========================================================================

@@ -1,7 +1,6 @@
 """`zeropath mcp` command surface."""
 
 from pathlib import Path
-from typing import Optional
 
 import click
 from rich.console import Console
@@ -13,9 +12,9 @@ from rich.table import Table
 def mcp(ctx: click.Context) -> None:
     """Run ZeroPath as an MCP server / install it into your IDE."""
     if ctx.invoked_subcommand is None:
-        from zeropath.mcp_server import build_default_server
+        from zeropath.mcp import build_server
 
-        build_default_server(workspace_root=Path(".")).serve_forever()
+        build_server(workspace_root=Path(".")).serve_forever()
 
 
 @mcp.command("serve")
@@ -26,11 +25,16 @@ def mcp(ctx: click.Context) -> None:
     help="Directory holding a Phase 8 kg.json snapshot.",
 )
 @click.pass_context
-def mcp_serve(ctx: click.Context, kg_dir: Optional[Path]) -> None:
+def mcp_serve(ctx: click.Context, kg_dir: Path | None) -> None:
     """Run the MCP server over stdio (invoked by your IDE, not directly)."""
-    from zeropath.mcp_server import build_default_server
+    from zeropath.mcp import build_server
 
-    server = build_default_server(kg_dir=kg_dir, workspace_root=Path("."))
+    if kg_dir:
+        click.echo(
+            "[zeropath] --kg-dir is ignored by the canonical evidence-first MCP server.",
+            err=True,
+        )
+    server = build_server(workspace_root=Path("."))
     server.serve_forever()
 
 
@@ -60,8 +64,8 @@ def mcp_serve(ctx: click.Context, kg_dir: Optional[Path]) -> None:
 def mcp_install(
     ctx: click.Context,
     client: str,
-    python: Optional[str],
-    kg_dir: Optional[Path],
+    python: str | None,
+    kg_dir: Path | None,
     dry_run: bool,
 ) -> None:
     """Register the ZeroPath MCP server with one or more IDEs."""
@@ -140,10 +144,10 @@ def mcp_uninstall(ctx: click.Context, client: str) -> None:
 @mcp.command("tools")
 @click.pass_context
 def mcp_tools(ctx: click.Context) -> None:
-    """List every tool / resource / prompt exposed by the MCP server."""
-    from zeropath.mcp_server import build_default_server
+    """List every tool exposed by the canonical evidence-first MCP server."""
+    from zeropath.mcp import build_server
 
-    server = build_default_server(workspace_root=Path("."))
+    server = build_server(workspace_root=Path("."))
     console = Console()
 
     table = Table(title="MCP tools", show_header=True)
@@ -153,19 +157,5 @@ def mcp_tools(ctx: click.Context) -> None:
         desc = tool.description.replace("\n", " ")
         table.add_row(name, desc[:120])
     console.print(table)
-
-    resources_table = Table(title="MCP resources", show_header=True)
-    resources_table.add_column("URI")
-    resources_table.add_column("Description")
-    for uri, resource in server.resources.items():
-        resources_table.add_row(uri, resource.description[:120])
-    console.print(resources_table)
-
-    prompt_table = Table(title="MCP prompts", show_header=True)
-    prompt_table.add_column("Name")
-    prompt_table.add_column("Description")
-    for name, prompt in server.prompts.items():
-        prompt_table.add_row(name, prompt.description[:120])
-    console.print(prompt_table)
 
 __all__ = ["mcp"]

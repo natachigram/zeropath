@@ -1,10 +1,12 @@
 """
-ZeroPath MCP server — expose Phase 1-10 + contest mode + KG queries as
-Model Context Protocol tools / resources / prompts for any MCP-compatible
-IDE (Claude Code, Claude Desktop, Cursor, Cline, Continue, Zed, Windsurf,
-ChatGPT Desktop).
+Legacy combined MCP server.
 
-Public API::
+The canonical evidence-first MCP surface lives in :mod:`zeropath.mcp`.
+This package is retained for compatibility with older graph, contest, and
+KG tools, and it still owns the shared JSON-RPC transport and installer
+utilities used by the canonical server.
+
+Legacy public API::
 
     from zeropath.mcp_server import build_default_server
 
@@ -15,11 +17,10 @@ Or via the CLI::
 
     zeropath mcp install --client claude-code
     zeropath mcp serve              # invoked by the IDE
-    zeropath mcp tools              # list every exposed tool
+    zeropath mcp tools              # lists canonical evidence-first tools
 """
 
 from pathlib import Path
-from typing import Optional
 
 from zeropath.mcp_server.install import (
     SUPPORTED_CLIENTS,
@@ -41,12 +42,12 @@ from zeropath.mcp_server.protocol import (
 )
 from zeropath.mcp_server.resources import register_default_resources
 from zeropath.mcp_server.server import (
+    SERVER_NAME,
+    SERVER_VERSION,
     MCPServer,
     Prompt,
     Resource,
     ResourceTemplate,
-    SERVER_NAME,
-    SERVER_VERSION,
     Tool,
 )
 from zeropath.mcp_server.tools import ServerState, register_default_tools
@@ -54,9 +55,9 @@ from zeropath.mcp_server.tools import ServerState, register_default_tools
 
 def build_default_server(
     *,
-    kg_dir: Optional[Path] = None,
-    workspace_root: Optional[Path] = None,
-    transport: Optional[StdioTransport] = None,
+    kg_dir: Path | None = None,
+    workspace_root: Path | None = None,
+    transport: StdioTransport | None = None,
 ) -> MCPServer:
     """
     Construct a fully-wired MCP server with every default tool / resource

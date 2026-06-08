@@ -11,7 +11,6 @@ from zeropath.core.state_plan import build_candidate_state_plan
 from zeropath.core.storage import Storage
 from zeropath.core.utils import sha256_file
 
-
 SOLIDITY = """
 pragma solidity ^0.8.20;
 
@@ -49,6 +48,35 @@ def test_cli_init_ingest_understand_hunt_flow():
         result = runner.invoke(cli, ["hunt", "--repo", ".", "--mode", "critical", "--limit", "5"])
         assert result.exit_code == 0, result.output
         assert "Hypotheses are not findings" in result.output
+
+
+def test_cli_help_leads_with_recommended_workflow():
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["--help"])
+
+    assert result.exit_code == 0, result.output
+    assert "Recommended workflow" in result.output
+    assert "zeropath init" in result.output
+    assert "zeropath ingest" in result.output
+    assert "zeropath understand" in result.output
+    assert "zeropath hunt" in result.output
+    assert "zeropath prove" in result.output
+    assert "zeropath judge" in result.output
+    assert "zeropath report" in result.output
+
+
+def test_legacy_cli_alias_warns_with_recommended_replacement(tmp_path):
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli,
+        ["attack", str(tmp_path / "missing-invariants.json"), str(tmp_path / "missing-graph.json")],
+    )
+
+    assert result.exit_code == 1
+    assert "Legacy command `attack` is deprecated" in result.output
+    assert "zeropath hunt --mode critical" in result.output
 
 
 def test_report_command_refuses_final_without_judge(tmp_path):
