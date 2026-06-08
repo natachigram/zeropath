@@ -44,6 +44,7 @@ def build_evidence_tools(state: EvidenceMCPState) -> list[Tool]:
         _memory_search(state),
         _memory_write_proposal(state),
         _memory_mark_stale(state),
+        _memory_refresh_stale(state),
     ]
 
 
@@ -497,3 +498,25 @@ def _memory_mark_stale(state: EvidenceMCPState) -> Tool:
             return _err(str(exc))
 
     return Tool("zeropath_memory_mark_stale", "Mark one memory item stale with a reason. Requires write_mode=true.", object_schema({"repo_path": {"type": "string"}, "memory_id": {"type": "string"}, "reason": {"type": "string"}, **WRITE_MODE}, ["memory_id", "reason"]), handler)
+
+
+def _memory_refresh_stale(state: EvidenceMCPState) -> Tool:
+    def handler(args: dict[str, Any]) -> dict[str, Any]:
+        if not require_write(args):
+            return _err("write_mode=true is required to refresh stale memory markers")
+        repo = state.repo(args)
+        log_tool_call(repo, "zeropath_memory_refresh_stale", args)
+        try:
+            from zeropath.core.memory import mark_stale_memories
+
+            marked = mark_stale_memories(_storage(repo))
+            return _ok(marked=[item.model_dump(mode="json") for item in marked], count=len(marked))
+        except Exception as exc:
+            return _err(str(exc))
+
+    return Tool(
+        "zeropath_memory_refresh_stale",
+        "Mark anchored memories stale when repo commits or source file hashes changed. Requires write_mode=true.",
+        object_schema({"repo_path": {"type": "string"}, **WRITE_MODE}),
+        handler,
+    )

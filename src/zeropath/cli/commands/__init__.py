@@ -5,6 +5,7 @@ from typing import Any
 
 from zeropath.cli.commands.candidates import candidates
 from zeropath.cli.commands.judge import judge
+from zeropath.cli.commands.memory import memory
 from zeropath.cli.commands.prove import prove
 from zeropath.cli.commands.report import report
 
@@ -13,7 +14,6 @@ _COMMAND_MODULES = {
     "ingest": "ingest",
     "init": "init",
     "mcp": "mcp",
-    "memory": "memory",
     "status": "status",
     "understand": "understand",
 }

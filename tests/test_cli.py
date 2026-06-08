@@ -4,9 +4,11 @@ from pathlib import Path
 from click.testing import CliRunner
 
 from zeropath.cli import cli
+from zeropath.core.memory import propose_memory
 from zeropath.core.schemas import CandidateFinding, Impact, ProjectConfig
 from zeropath.core.state_plan import build_candidate_state_plan
 from zeropath.core.storage import Storage
+from zeropath.core.utils import sha256_file
 
 
 SOLIDITY = """
@@ -204,6 +206,34 @@ def test_prove_runs_generated_candidate_test_path(tmp_path, monkeypatch):
     assert expected.exists()
     assert Path(calls["match_path"]) == expected
     assert storage.load_candidate("ZP-019").status == "poc_passed"
+
+
+def test_memory_refresh_stale_command_marks_changed_source_memory(tmp_path):
+    source = tmp_path / "contracts" / "Vault.sol"
+    source.parent.mkdir()
+    source.write_text("contract Vault {}\n", encoding="utf-8")
+    original_hash = sha256_file(source)
+    storage = Storage(tmp_path)
+    storage.initialize(ProjectConfig(project_id="demo", root_path=str(tmp_path), adapter="evm"))
+    _, memory = propose_memory(
+        storage,
+        content="Rejected because Vault.withdraw has no external call.",
+        memory_type="rejected_hypothesis",
+        confidence="rejected",
+        source="judge",
+        tags=["rejected", "vault"],
+    )
+    assert memory is not None
+    memory.file_hashes = {"contracts/Vault.sol": original_hash}
+    storage.save_memory(memory)
+    source.write_text("contract Vault { function withdraw() external {} }\n", encoding="utf-8")
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["memory", "refresh-stale", "--repo", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    assert "Marked stale" in result.output
+    assert storage.load_memory(memory.id).stale is True
 
 
 def test_cli_package_layout_exports_evidence_commands():

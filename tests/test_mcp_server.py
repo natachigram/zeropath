@@ -25,9 +25,11 @@ from typing import Any
 
 import pytest
 
+from zeropath.core.memory import propose_memory
 from zeropath.core.schemas import CandidateFinding, Impact, ProjectConfig
 from zeropath.core.state_plan import build_candidate_state_plan
 from zeropath.core.storage import Storage
+from zeropath.core.utils import sha256_file
 from zeropath.mcp_server import (
     JsonRpcError,
     JsonRpcRequest,
@@ -474,6 +476,7 @@ class TestBuildDefaultServer:
             "zeropath_judge_candidate",
             "zeropath_export_report",
             "zeropath_memory_search",
+            "zeropath_memory_refresh_stale",
         ):
             assert tool_name in server.tools, f"missing evidence tool: {tool_name}"
 
@@ -621,6 +624,38 @@ class TestEvidenceMcpSecurity:
         assert result["ok"] is True
         assert result["state_plan"]["artifact_path"] is None
         assert storage.load_record("state_plan", "ZP-015") is None
+
+    def test_memory_refresh_stale_tool_requires_write_and_marks_changed_source(self, tmp_path):
+        source = tmp_path / "contracts" / "Vault.sol"
+        source.parent.mkdir()
+        source.write_text("contract Vault {}\n", encoding="utf-8")
+        original_hash = sha256_file(source)
+        storage = Storage(tmp_path)
+        storage.initialize(ProjectConfig(project_id="demo", root_path=str(tmp_path), adapter="evm"))
+        _, memory = propose_memory(
+            storage,
+            content="Rejected because Vault.withdraw has no external call.",
+            memory_type="rejected_hypothesis",
+            confidence="rejected",
+            source="judge",
+            tags=["rejected", "vault"],
+        )
+        assert memory is not None
+        memory.file_hashes = {"contracts/Vault.sol": original_hash}
+        storage.save_memory(memory)
+        source.write_text("contract Vault { function withdraw() external {} }\n", encoding="utf-8")
+        server = build_default_server(workspace_root=tmp_path)
+
+        denied = server.tools["zeropath_memory_refresh_stale"].handler({"repo_path": str(tmp_path)})
+        result = server.tools["zeropath_memory_refresh_stale"].handler(
+            {"repo_path": str(tmp_path), "write_mode": True}
+        )
+
+        assert denied["ok"] is False
+        assert result["ok"] is True
+        assert result["count"] == 1
+        assert result["marked"][0]["id"] == memory.id
+        assert storage.load_memory(memory.id).stale is True
 
     def test_build_state_plan_persists_with_write_mode(self, tmp_path):
         storage = Storage(tmp_path)
