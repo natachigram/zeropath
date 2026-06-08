@@ -77,8 +77,9 @@ def _summary(protocol_type: str, contracts: list[str], index: dict) -> str:
     contract_text = ", ".join(contracts[:5]) if contracts else "no contracts indexed"
     if len(contracts) > 5:
         contract_text += f", and {len(contracts) - 5} more"
+    article = "an" if protocol_type[:1].lower() in {"a", "e", "i", "o", "u"} else "a"
     return (
-        f"Detected an {protocol_type} project from lightweight adapter indexing. "
+        f"Detected {article} {protocol_type} project from lightweight adapter indexing. "
         f"Indexed contracts: {contract_text}. "
         f"Signals are heuristic and should be confirmed before reporting."
     )

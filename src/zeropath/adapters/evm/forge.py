@@ -34,14 +34,19 @@ def run_forge_test(root_path: str | Path, match_path: str | Path | None = None) 
         )
     except subprocess.TimeoutExpired as exc:
         return {"ok": False, "status": "timeout", "stdout": exc.stdout, "stderr": exc.stderr}
+    stdout = result.stdout[-12000:]
+    stderr = result.stderr[-12000:]
+    no_tests = "No tests found" in f"{stdout}\n{stderr}"
+    ok = result.returncode == 0 and not no_tests
     return {
-        "ok": result.returncode == 0,
-        "status": "passed" if result.returncode == 0 else "failed",
+        "ok": ok,
+        "status": "no_tests" if no_tests else ("passed" if result.returncode == 0 else "failed"),
         "returncode": result.returncode,
         "command": cmd,
         "match_path": normalized_match_path,
-        "stdout": result.stdout[-12000:],
-        "stderr": result.stderr[-12000:],
+        "message": "forge returned success but did not discover any tests" if no_tests else None,
+        "stdout": stdout,
+        "stderr": stderr,
     }
 
 

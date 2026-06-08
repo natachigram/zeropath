@@ -31,6 +31,69 @@ def test_candidate_generation_and_lifecycle_update(tmp_path):
     assert updated.status == "rejected"
 
 
+def test_vault_candidate_prefers_protocol_contract_over_token_or_tests(tmp_path):
+    storage = Storage(tmp_path)
+    storage.initialize(ProjectConfig(project_id="demo", root_path=str(tmp_path), adapter="evm"))
+    storage.save_record(
+        "ingest",
+        "evm_index",
+        {
+            "protocol_type": "vault",
+            "signals": ["asset_accounting", "token_transfer"],
+            "contracts": [
+                {"name": "MockERC20", "file": "src/VulnerableVault.sol"},
+                {"name": "VulnerableVault", "file": "src/VulnerableVault.sol"},
+                {"name": "Actor", "file": "test/VulnerableVault.t.sol"},
+                {"name": "VulnerableVaultTest", "file": "test/VulnerableVault.t.sol"},
+            ],
+            "functions": [
+                {
+                    "name": "mint",
+                    "contract": "MockERC20",
+                    "file": "src/VulnerableVault.sol",
+                    "line_start": 13,
+                },
+                {
+                    "name": "totalAssets",
+                    "contract": "VulnerableVault",
+                    "file": "src/VulnerableVault.sol",
+                    "line_start": 50,
+                },
+                {
+                    "name": "deposit",
+                    "contract": "VulnerableVault",
+                    "file": "src/VulnerableVault.sol",
+                    "line_start": 54,
+                },
+                {
+                    "name": "redeem",
+                    "contract": "VulnerableVault",
+                    "file": "src/VulnerableVault.sol",
+                    "line_start": 61,
+                },
+                {
+                    "name": "deposit",
+                    "contract": "Actor",
+                    "file": "test/VulnerableVault.t.sol",
+                    "line_start": 18,
+                },
+            ],
+            "raw_signal_text": ["balanceOf totalAssets deposit redeem transferFrom"],
+        },
+    )
+
+    candidates = generate_candidates(storage, mode="critical", limit=5)
+
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate.root_cause_locations[0].contract == "VulnerableVault"
+    assert candidate.root_cause_locations[0].function == "totalAssets"
+    assert candidate.affected_contracts == ["VulnerableVault"]
+    assert {"totalAssets", "deposit", "redeem"} <= set(candidate.entrypoints)
+    assert "MockERC20" not in candidate.affected_contracts
+    assert "Actor" not in candidate.affected_contracts
+
+
 def test_candidate_generation_uses_sequential_ids(tmp_path):
     storage = Storage(tmp_path)
     storage.initialize(ProjectConfig(project_id="demo", root_path=str(tmp_path), adapter="evm"))

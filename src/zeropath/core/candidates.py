@@ -158,6 +158,12 @@ def _templates(index: dict, protocol_type: str, mode: str, focus: str | None) ->
         has_virtual = "virtual" in text or "dead shares" in text or "decimals offset" in text
         if has_vault_paths and has_assets and not has_virtual:
             loc = _first_location(index, {"deposit", "mint", "withdraw", "redeem", "totalAssets"})
+            vault_contracts = [loc.contract] if loc and loc.contract else contracts
+            vault_entrypoints = _contract_entrypoints(
+                index,
+                loc.contract if loc else None,
+                ("deposit", "mint", "withdraw", "redeem", "totalAssets"),
+            ) or ["deposit", "mint", "withdraw", "redeem"]
             templates.append(
                 _candidate_template(
                     title="Vault share accounting may be inflation-sensitive",
@@ -182,8 +188,8 @@ def _templates(index: dict, protocol_type: str, mode: str, focus: str | None) ->
                         explanation="Potential theft of later depositor assets if share accounting is manipulable.",
                     ),
                     locations=[loc] if loc else [],
-                    entrypoints=["deposit", "mint", "withdraw", "redeem"],
-                    contracts=contracts,
+                    entrypoints=vault_entrypoints,
+                    contracts=vault_contracts,
                     tags=["evm", "vault", "erc4626", "hypothesis"],
                 )
             )
@@ -567,6 +573,21 @@ def _matching_function_names(index: dict, needles: tuple[str, ...]) -> list[str]
     return matches
 
 
+def _contract_entrypoints(index: dict, contract: str | None, needles: tuple[str, ...]) -> list[str]:
+    if not contract:
+        return []
+    lowered = tuple(needle.lower() for needle in needles)
+    matches: list[str] = []
+    for fn in index.get("functions", []):
+        name = fn.get("name", "")
+        if fn.get("contract") != contract or not name:
+            continue
+        name_l = name.lower()
+        if any(needle in name_l for needle in lowered) and name not in matches:
+            matches.append(name)
+    return matches
+
+
 def _candidate_template(
     *,
     title: str,
@@ -612,16 +633,20 @@ def _allowed(mode: str, severity: str) -> bool:
 
 def _first_location(index: dict, names: set[str]) -> SourceLocation | None:
     lowered = {name.lower() for name in names}
+    function_matches: list[tuple[int, int, dict]] = []
     for fn in index.get("functions", []):
         if fn.get("name", "").lower() in lowered:
-            return SourceLocation(
-                file=fn.get("file", ""),
-                contract=fn.get("contract"),
-                function=fn.get("name"),
-                line_start=fn.get("line_start"),
-                line_end=fn.get("line_end"),
-                description="Heuristic signal location; not yet proof.",
-            )
+            function_matches.append((_location_score(fn), int(fn.get("line_start") or 0), fn))
+    if function_matches:
+        _, _, fn = sorted(function_matches, key=lambda item: item[:2])[0]
+        return SourceLocation(
+            file=fn.get("file", ""),
+            contract=fn.get("contract"),
+            function=fn.get("name"),
+            line_start=fn.get("line_start"),
+            line_end=fn.get("line_end"),
+            description="Heuristic signal location; not yet proof.",
+        )
     for contract in index.get("contracts", []):
         if contract.get("name", "").lower() in lowered:
             return SourceLocation(
@@ -631,3 +656,29 @@ def _first_location(index: dict, names: set[str]) -> SourceLocation | None:
                 description="Heuristic signal location; not yet proof.",
             )
     return None
+
+
+def _location_score(fn: dict) -> int:
+    score = 0
+    name = str(fn.get("name", "")).lower()
+    contract = str(fn.get("contract", "")).lower()
+    file = str(fn.get("file", "")).lower()
+    if file.startswith(("test/", "script/")):
+        score += 20
+    if contract.endswith("test") or contract in {"actor"}:
+        score += 20
+    if contract.startswith(("mock", "test")):
+        score += 10
+    if name in {
+        "totalassets",
+        "deposit",
+        "redeem",
+        "withdraw",
+        "liquidate",
+        "execute",
+        "initialize",
+    }:
+        score -= 5
+    if any(term in contract for term in ("vault", "pool", "bridge", "governor")):
+        score -= 3
+    return score

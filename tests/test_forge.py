@@ -30,6 +30,22 @@ def test_run_forge_test_scopes_absolute_match_path_relative_to_root(tmp_path, mo
     assert captured["cwd"] == str(tmp_path)
 
 
+def test_run_forge_test_treats_no_tests_as_not_passing(tmp_path, monkeypatch):
+    class Completed:
+        returncode = 0
+        stdout = "Compiler run successful!\nNo tests found in project!"
+        stderr = ""
+
+    monkeypatch.setattr(forge.shutil, "which", lambda name: "/usr/bin/forge")
+    monkeypatch.setattr(forge.subprocess, "run", lambda *args, **kwargs: Completed())
+
+    result = forge.run_forge_test(tmp_path, tmp_path / ".zeropath" / "pocs" / "ZP_001.t.sol")
+
+    assert result["ok"] is False
+    assert result["status"] == "no_tests"
+    assert "did not discover any tests" in result["message"]
+
+
 def test_save_forge_trace_writes_trace_artifact(tmp_path):
     storage = Storage(tmp_path)
     storage.initialize(ProjectConfig(project_id="demo", root_path=str(tmp_path), adapter="evm"))
