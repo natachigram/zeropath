@@ -14,6 +14,7 @@ from zeropath.adapters.evm.poc_templates import render_foundry_poc
 from zeropath.core.schemas import (
     AdapterDetection,
     CandidateFinding,
+    CandidateStatePlan,
     ExternalDependency,
     Invariant,
     ProjectConfig,
@@ -87,8 +88,12 @@ class EVMAdapter(LanguageAdapter):
     def suggest_invariants(self, protocol_intent: ProtocolIntent) -> list[Invariant]:
         return suggest_evm_invariants(protocol_intent)
 
-    def generate_poc(self, candidate: CandidateFinding) -> str | None:
-        return render_foundry_poc(candidate)
+    def generate_poc(
+        self,
+        candidate: CandidateFinding,
+        state_plan: CandidateStatePlan | None = None,
+    ) -> str | None:
+        return render_foundry_poc(candidate, state_plan=state_plan)
 
     def run_proof(self, candidate: CandidateFinding) -> dict[str, Any]:
         if not self.root_path:

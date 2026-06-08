@@ -131,6 +131,9 @@ Generate a proof skeleton and run Foundry if available:
 zeropath prove ZP-001 --backend foundry
 ```
 
+If a state plan exists, the generated Foundry skeleton includes its setup
+steps, missing dependencies, suggested fixtures, and evidence checklist.
+
 Run judge checks:
 
 ```bash

@@ -26,6 +26,7 @@ from typing import Any
 import pytest
 
 from zeropath.core.schemas import CandidateFinding, Impact, ProjectConfig
+from zeropath.core.state_plan import build_candidate_state_plan
 from zeropath.core.storage import Storage
 from zeropath.mcp_server import (
     JsonRpcError,
@@ -643,6 +644,33 @@ class TestEvidenceMcpSecurity:
         assert result["ok"] is True
         assert result["state_plan"]["artifact_path"]
         assert storage.load_record("state_plan", "ZP-016")["candidate_id"] == "ZP-016"
+
+    def test_generate_foundry_poc_uses_saved_state_plan(self, tmp_path):
+        storage = Storage(tmp_path)
+        storage.initialize(ProjectConfig(project_id="demo", root_path=str(tmp_path), adapter="evm"))
+        storage.save_candidate(
+            CandidateFinding(
+                id="ZP-018",
+                project_id="demo",
+                title="MCP planned PoC target",
+                attacker_model="Untrusted borrower",
+                required_state=["oracle stale"],
+                transaction_sequence=["borrow"],
+                impact=Impact(impact_type="bad_debt", funds_at_risk=True, explanation="demo"),
+                tags=["oracle"],
+            )
+        )
+        plan = build_candidate_state_plan(storage, "ZP-018")
+        server = build_default_server(workspace_root=tmp_path)
+
+        result = server.tools["zeropath_generate_foundry_poc"].handler(
+            {"repo_path": str(tmp_path), "candidate_id": "ZP-018", "write_mode": True}
+        )
+
+        assert result["ok"] is True
+        poc = Path(result["poc_path"]).read_text()
+        assert plan.artifact_path in poc
+        assert "oracle fixture, mocked feed, or forked oracle state" in poc
 
 
 class TestIngestThreatIntelTool:

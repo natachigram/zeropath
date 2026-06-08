@@ -60,6 +60,23 @@ def build_candidate_state_plan(
     return plan
 
 
+def load_candidate_state_plan(storage: Storage, candidate_id: str) -> CandidateStatePlan | None:
+    """Load a previously persisted state plan if one exists."""
+
+    data = storage.load_record("state_plan", candidate_id)
+    return CandidateStatePlan.model_validate(data) if data else None
+
+
+def get_or_build_candidate_state_plan(storage: Storage, candidate_id: str) -> CandidateStatePlan:
+    """Return a saved state plan or a transient plan derived from the candidate."""
+
+    return load_candidate_state_plan(storage, candidate_id) or build_candidate_state_plan(
+        storage,
+        candidate_id,
+        persist=False,
+    )
+
+
 def _setup_steps(candidate: CandidateFinding) -> list[str]:
     steps: list[str] = []
     if candidate.attacker_model:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from zeropath.adapters.evm.poc_templates import render_foundry_poc
-from zeropath.core.schemas import CandidateFinding
+from zeropath.core.schemas import CandidateFinding, CandidateStatePlan
 
 
 def has_foundry_project(root_path: str | Path) -> bool:
@@ -26,10 +26,16 @@ def candidate_test_path(root_path: str | Path, candidate: CandidateFinding) -> P
     return base / "zeropath" / f"{candidate.id.replace('-', '_')}.t.sol"
 
 
-def write_candidate_test(root_path: str | Path, candidate: CandidateFinding, *, force: bool = False) -> Path:
+def write_candidate_test(
+    root_path: str | Path,
+    candidate: CandidateFinding,
+    *,
+    state_plan: CandidateStatePlan | None = None,
+    force: bool = False,
+) -> Path:
     path = candidate_test_path(root_path, candidate)
     if path.exists() and not force:
         raise FileExistsError(f"Refusing to overwrite existing test: {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render_foundry_poc(candidate), encoding="utf-8")
+    path.write_text(render_foundry_poc(candidate, state_plan=state_plan), encoding="utf-8")
     return path

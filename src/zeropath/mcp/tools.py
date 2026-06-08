@@ -322,18 +322,29 @@ def _generate_foundry_poc(state: EvidenceMCPState) -> Tool:
         try:
             from zeropath.adapters.evm import EVMAdapter
             from zeropath.adapters.evm.foundry import write_candidate_test
+            from zeropath.core.state_plan import get_or_build_candidate_state_plan
 
             storage = _storage(repo)
             candidate = storage.load_candidate(args["candidate_id"])
             if not candidate:
                 return _err("candidate not found")
-            poc = EVMAdapter(repo).generate_poc(candidate)
+            state_plan = get_or_build_candidate_state_plan(storage, args["candidate_id"])
+            poc = EVMAdapter(repo).generate_poc(candidate, state_plan=state_plan)
             path = storage.append_artifact(Path("pocs") / f"{candidate.id.replace('-', '_')}.t.sol", poc or "", overwrite=True)
             candidate.evidence.poc_path = str(path)
             candidate.status = "poc_generated"
+            if state_plan.artifact_path:
+                candidate.evidence.notes.append(f"PoC generated from state plan {state_plan.artifact_path}")
+            else:
+                candidate.evidence.notes.append("PoC generated from transient state plan; persist a state plan for repeatability.")
             poc_write_mode = args.get("write_mode_kind") or args.get("write_mode") or "artifact_only"
             if poc_write_mode == "test_dir":
-                test_path = write_candidate_test(repo, candidate, force=bool(args.get("force")))
+                test_path = write_candidate_test(
+                    repo,
+                    candidate,
+                    state_plan=state_plan,
+                    force=bool(args.get("force")),
+                )
                 candidate.evidence.notes.append(f"Foundry test written to {test_path}")
             storage.save_candidate(candidate)
             return _ok(poc_path=str(path))

@@ -13,6 +13,7 @@ from typing import Any
 from zeropath.core.schemas import (
     AdapterDetection,
     CandidateFinding,
+    CandidateStatePlan,
     ExternalDependency,
     Invariant,
     ProjectConfig,
@@ -61,7 +62,11 @@ class LanguageAdapter(ABC):
     def suggest_invariants(self, protocol_intent: ProtocolIntent) -> list[Invariant]:
         raise NotImplementedError
 
-    def generate_poc(self, candidate: CandidateFinding) -> str | None:
+    def generate_poc(
+        self,
+        candidate: CandidateFinding,
+        state_plan: CandidateStatePlan | None = None,
+    ) -> str | None:
         raise NotImplementedError
 
     def run_proof(self, candidate: CandidateFinding) -> dict[str, Any]:

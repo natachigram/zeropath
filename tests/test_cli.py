@@ -1,9 +1,11 @@
 import importlib
+from pathlib import Path
 
 from click.testing import CliRunner
 
 from zeropath.cli import cli
 from zeropath.core.schemas import CandidateFinding, Impact, ProjectConfig
+from zeropath.core.state_plan import build_candidate_state_plan
 from zeropath.core.storage import Storage
 
 
@@ -140,6 +142,34 @@ def test_candidates_plan_command_writes_state_plan(tmp_path):
     assert "State plan" in result.output
     assert storage.load_candidate("ZP-014").status == "state_planned"
     assert storage.load_record("state_plan", "ZP-014")["candidate_id"] == "ZP-014"
+
+
+def test_prove_uses_saved_state_plan_in_generated_poc(tmp_path):
+    storage = Storage(tmp_path)
+    storage.initialize(ProjectConfig(project_id="demo", root_path=str(tmp_path), adapter="evm"))
+    storage.save_candidate(
+        CandidateFinding(
+            id="ZP-017",
+            project_id="demo",
+            title="Planned proof target",
+            attacker_model="Untrusted depositor",
+            required_state=["vault seeded"],
+            transaction_sequence=["deposit", "redeem"],
+            impact=Impact(impact_type="direct_theft", funds_at_risk=True, explanation="demo"),
+        )
+    )
+    plan = build_candidate_state_plan(storage, "ZP-017")
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["prove", "ZP-017", "--repo", str(tmp_path), "--no-run"])
+
+    assert result.exit_code == 0, result.output
+    candidate = storage.load_candidate("ZP-017")
+    assert candidate.evidence.poc_path
+    poc = Path(candidate.evidence.poc_path).read_text()
+    assert plan.artifact_path in poc
+    assert "Setup steps" not in poc
+    assert "TODO: Materialize required state: vault seeded" in poc
 
 
 def test_cli_package_layout_exports_evidence_commands():
