@@ -258,6 +258,230 @@ def _templates(index: dict, protocol_type: str, mode: str, focus: str | None) ->
                 )
             )
 
+    if _allowed(mode, "critical"):
+        bridge_entrypoints = _matching_function_names(
+            index,
+            ("claim", "executeMessage", "finalize", "processMessage", "receiveMessage", "relay"),
+        )
+        value_entrypoints = _matching_function_names(
+            index,
+            ("claim", "finalize", "mint", "release", "unlock", "withdraw"),
+        )
+        has_bridge_signal = protocol_type == "bridge" or any(
+            term in text
+            for term in (
+                "bridge",
+                "chainid",
+                "cross-chain",
+                "crosschain",
+                "destinationchain",
+                "domain",
+                "receivemessage",
+                "sendmessage",
+                "sourcechain",
+            )
+        )
+        has_message_identity = bool(bridge_entrypoints) and any(
+            term in text
+            for term in (
+                "chain id",
+                "chainid",
+                "destinationchain",
+                "domain",
+                "message",
+                "message id",
+                "messageid",
+                "nonce",
+                "payload",
+                "sourcechain",
+            )
+        )
+        has_value_release = bool(value_entrypoints) or any(
+            term in text
+            for term in (
+                "bridged asset",
+                "claim",
+                "mint",
+                "release",
+                "unlock",
+                "withdraw bridged",
+                "wrapped token",
+            )
+        )
+        has_replay_guard = any(
+            term in text
+            for term in (
+                "claimedmessage",
+                "consumedmessage",
+                "executed[",
+                "executedmessage",
+                "hashexecuted",
+                "isprocessed",
+                "markprocessed",
+                "messageexecuted",
+                "messagehashes",
+                "nonces[",
+                "processed[",
+                "processedmessage",
+                "replayprotection",
+                "usednonce",
+                "usednonces",
+            )
+        )
+        if has_bridge_signal and has_message_identity and has_value_release and not has_replay_guard:
+            loc = _first_location(
+                index,
+                set(bridge_entrypoints + value_entrypoints)
+                or {"claim", "executeMessage", "finalize", "mint", "receiveMessage", "release"},
+            )
+            templates.append(
+                _candidate_template(
+                    title="Bridge message execution may allow replayed mint or release",
+                    bug_class="bridge_message_replay_double_mint",
+                    protocol_type="bridge",
+                    invariant="INV-BRIDGE-001",
+                    severity="critical",
+                    attacker="Untrusted relayer or user able to resubmit an already-valid bridge message to the destination execution path.",
+                    required=[
+                        "A valid source-chain message authorizes minting or release on the destination chain.",
+                        "Destination execution does not persistently reject the same message id/domain/nonce before value movement.",
+                        "Attacker can replay the same proof or calldata after a successful execution.",
+                    ],
+                    sequence=[
+                        "Obtain or observe a valid bridge message that mints or releases assets.",
+                        "Execute the message once through the destination bridge path.",
+                        "Replay the same message/proof/calldata through the same execution path.",
+                        "Measure duplicated minted balance, released funds, or bridge reserve loss.",
+                    ],
+                    impact=Impact(
+                        impact_type="unauthorized_mint",
+                        funds_at_risk=True,
+                        explanation="Replayable bridge messages can double mint wrapped assets or release locked funds more than once.",
+                    ),
+                    locations=[loc] if loc else [],
+                    entrypoints=bridge_entrypoints
+                    + [name for name in value_entrypoints if name not in bridge_entrypoints],
+                    contracts=contracts,
+                    tags=["evm", "bridge", "replay", "double-mint", "hypothesis"],
+                )
+            )
+
+    if _allowed(mode, "critical"):
+        propose_entrypoints = _matching_function_names(index, ("propose",))
+        vote_entrypoints = _matching_function_names(index, ("castVote", "vote"))
+        execute_entrypoints = [
+            name
+            for name in _matching_function_names(index, ("execute",))
+            if "executeoperation" not in name.lower()
+        ]
+        governance_entrypoints = propose_entrypoints + vote_entrypoints + execute_entrypoints
+        has_governance_signal = protocol_type == "governance" or any(
+            term in text for term in ("governance", "governor", "proposal", "quorum", "voting")
+        )
+        has_governance_flow = (
+            has_governance_signal
+            and bool(vote_entrypoints)
+            and bool(execute_entrypoints)
+            and (bool(propose_entrypoints) or "proposal" in text)
+        )
+        has_vote_threshold = any(
+            term in text
+            for term in (
+                "balanceof",
+                "getvotes",
+                "proposalthreshold",
+                "quorum",
+                "total supply",
+                "totalsupply",
+                "voting power",
+                "votes",
+            )
+        )
+        fund_entrypoints = _matching_function_names(
+            index,
+            ("drain", "grantRole", "mint", "setImplementation", "setMinter", "sweep", "transfer", "upgrade", "withdraw"),
+        )
+        has_fund_payload = bool(fund_entrypoints) or (
+            any(term in text for term in ("calldata", "targets", "values"))
+            and any(
+                term in text
+                for term in (
+                    "drain",
+                    "grantrole",
+                    "mint",
+                    "setimplementation",
+                    "setminter",
+                    "sweep",
+                    "transfer",
+                    "treasury",
+                    "upgrade",
+                    "withdraw",
+                )
+            )
+        )
+        has_timelock = "queue" in function_names or any(
+            term in text
+            for term in (
+                "eta",
+                "executiondelay",
+                "min delay",
+                "mindelay",
+                "queued",
+                "timelock",
+                "timelockcontroller",
+            )
+        )
+        has_snapshot = any(
+            term in text
+            for term in (
+                "checkpoint",
+                "erc20votes",
+                "getpastvotes",
+                "getpriorvotes",
+                "snapshot",
+                "votesat",
+            )
+        )
+        current_balance_vote = any(
+            term in text for term in ("balanceof", "current balance", "current votes", "flash loan", "flashloan")
+        )
+        weak_governance_execution = not has_timelock or (current_balance_vote and not has_snapshot)
+        if has_governance_flow and has_vote_threshold and has_fund_payload and weak_governance_execution:
+            loc = _first_location(
+                index,
+                set(execute_entrypoints + fund_entrypoints) or {"execute", "mint", "transfer", "upgradeTo"},
+            )
+            templates.append(
+                _candidate_template(
+                    title="Governance proposal execution may permit takeover with fund-impacting payload",
+                    bug_class="governance_executable_takeover",
+                    protocol_type="governance",
+                    invariant="INV-GOV-001",
+                    severity="critical",
+                    attacker="Untrusted token holder or borrower able to acquire voting power, pass a proposal, and execute fund-impacting calldata.",
+                    required=[
+                        "Governance exposes a proposal/vote/execute path reachable by token voting power.",
+                        "Accepted proposals can execute payloads that mint, transfer, withdraw, upgrade, or otherwise control protocol funds.",
+                        "No effective timelock, queued execution delay, or historical vote snapshot prevents rapid takeover execution.",
+                    ],
+                    sequence=[
+                        "Acquire or borrow enough voting power to satisfy proposal threshold or quorum.",
+                        "Submit a proposal with fund-impacting calldata.",
+                        "Vote the proposal through the vulnerable governance path.",
+                        "Execute the proposal and measure minted tokens, drained treasury funds, or upgraded control.",
+                    ],
+                    impact=Impact(
+                        impact_type="governance_takeover",
+                        funds_at_risk=True,
+                        explanation="Executable malicious proposals can mint, drain, or upgrade into control of protocol funds if governance constraints are bypassable.",
+                    ),
+                    locations=[loc] if loc else [],
+                    entrypoints=governance_entrypoints + fund_entrypoints,
+                    contracts=contracts,
+                    tags=["evm", "governance", "takeover", "fund-impact", "hypothesis"],
+                )
+            )
+
     if _allowed(mode, "high") and (protocol_type == "lending" or "liquidate" in function_names):
         if "liquidate" in function_names and any(term in text for term in ("healthfactor", "ltv", "threshold", "closefactor", "collateral")):
             loc = _first_location(index, {"liquidate", "healthFactor", "threshold", "closeFactor"})
@@ -328,6 +552,19 @@ def _templates(index: dict, protocol_type: str, mode: str, focus: str | None) ->
         focus_l = focus.lower()
         templates = [t for t in templates if focus_l in t["title"].lower() or focus_l in " ".join(t["tags"]).lower()]
     return templates
+
+
+def _matching_function_names(index: dict, needles: tuple[str, ...]) -> list[str]:
+    lowered = tuple(needle.lower() for needle in needles)
+    matches: list[str] = []
+    for fn in index.get("functions", []):
+        name = fn.get("name", "")
+        if not name:
+            continue
+        name_l = name.lower()
+        if any(needle in name_l for needle in lowered) and name not in matches:
+            matches.append(name)
+    return matches
 
 
 def _candidate_template(
