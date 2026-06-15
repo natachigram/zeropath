@@ -165,6 +165,14 @@ def test_render_import_path_tracks_poc_location():
     assert 'import "../../../src/V.sol";' in nested
 
 
+def test_render_includes_no_donation_baseline():
+    targets = InflationProofTargets("VulnerableVault", "MockERC20", "src/VulnerableVault.sol")
+    poc = render_inflation_poc(_candidate(), targets, poc_location="test/zeropath")
+    # A fresh, un-donated vault quantifies the victim's expected shares.
+    assert "new VulnerableVault(cleanToken)" in poc
+    assert 'emit Measured("expectedVictimSharesWithoutDonation", expectedVictimSharesWithoutDonation);' in poc
+
+
 # ---------------------------------------------------------------------------
 # parse_measured_events
 # ---------------------------------------------------------------------------
@@ -234,6 +242,20 @@ def test_apply_falls_back_to_victim_loss_when_no_profit():
     assert candidate.impact.measured is True
     assert "loss" in candidate.impact.amount.lower()
     assert candidate.evidence.profit_measured is True
+
+
+def test_apply_prefers_no_donation_baseline_for_victim_loss():
+    candidate = _candidate()
+    measured = {
+        "attackerProfit": 0,
+        "victimShares": 0,
+        "expectedVictimSharesWithoutDonation": 1000 * 10**18,
+    }
+    apply_inflation_proof_evidence(candidate, _passed_result(), measured)
+
+    assert candidate.impact.measured is True
+    assert "expected without donation" in candidate.impact.amount.lower()
+    assert "shortfall" in candidate.impact.amount.lower()
 
 
 def test_apply_leaves_impact_unmeasured_when_no_signal():

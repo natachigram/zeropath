@@ -23,7 +23,6 @@ def prove(candidate_id: str, repo: Path, backend: str, write_test_dir: bool, for
     from zeropath.adapters.evm import EVMAdapter
     from zeropath.adapters.evm.forge import run_forge_test, save_forge_trace
     from zeropath.adapters.evm.foundry import (
-        candidate_test_path,
         runnable_candidate_test_path,
         write_candidate_test,
         write_runnable_poc,
@@ -95,6 +94,10 @@ def prove(candidate_id: str, repo: Path, backend: str, write_test_dir: bool, for
             apply_inflation_proof_evidence(candidate, result, measured)
         if result.get("status") == "passed":
             candidate.status = "poc_passed"
+        else:
+            # Proof was attempted but did not pass (failed/no_tests/unavailable/
+            # timeout): the candidate is not report-ready and needs more evidence.
+            candidate.status = "needs_evidence"
     storage.save_candidate(candidate)
     console.print(f"[green]PoC artifact:[/green] {artifact}")
     console.print(f"Forge result: {candidate.evidence.forge_result or 'not run'}")

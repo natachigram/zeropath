@@ -37,13 +37,17 @@ Stable:
 - invariant suggestions
 - candidate lifecycle
 - judge-gated reports
+- concrete Foundry proof generation for the ERC4626 inflation benchmark fixture
+  (executable PoC, passing `forge test`, measured impact, report-ready gate);
+  being generalized
+- heuristic ERC4626 anti-condition (inflation-mitigation) detection
 - memory router
 - MCP scaffold
 
 Experimental:
 
 - heuristic hypothesis generation
-- Foundry PoC skeleton generation
+- Foundry PoC skeleton generation for non-inflation bug classes
 - old adversarial, simulator, monitor, and RL components
 - Solodit integration placeholder through the older knowledge modules
 

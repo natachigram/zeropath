@@ -124,6 +124,40 @@ def test_sherlock_draft_uses_not_ready_language_and_platform_sections():
     )
 
 
+def test_code4rena_report_includes_erc4626_inflation_mitigations():
+    candidate = _candidate()
+    candidate.bug_class = "erc4626_share_inflation"
+    report = render_report(candidate, _judge(), report_format="code4rena", draft=False)
+
+    mitigation = report.split("## Recommended Mitigation", 1)[1].split("##", 1)[0]
+    assert "virtual shares" in mitigation
+    assert "internal accounting" in mitigation
+    assert "dead shares" in mitigation
+    assert "first-deposit" in mitigation.lower()
+    assert "donation-resistant" in mitigation
+
+
+def test_generic_report_omits_erc4626_specific_mitigations():
+    report = render_report(_candidate(), _judge(), report_format="code4rena", draft=False)
+    mitigation = report.split("## Recommended Mitigation", 1)[1].split("##", 1)[0]
+    assert "virtual shares" not in mitigation
+
+
+def test_export_final_report_succeeds_after_judge_passes(tmp_path):
+    # Test 9: with a report-ready judge result, the final export is written.
+    storage = Storage(tmp_path)
+    storage.initialize(ProjectConfig(project_id="demo", root_path=str(tmp_path), adapter="evm"))
+    storage.save_candidate(_candidate())
+    storage.save_judge_result(_judge(ready=True))
+
+    path = export_report(storage, "ZP-RPT-001", report_format="code4rena", draft=False)
+    report = path.read_text()
+
+    assert path.name == "ZP-RPT-001_code4rena_final.md"
+    assert "# FINAL / REPORT READY:" in report
+    assert "## Proof Of Concept" in report
+
+
 def test_export_report_preserves_final_gate_and_writes_marked_draft(tmp_path):
     storage = Storage(tmp_path)
     storage.initialize(ProjectConfig(project_id="demo", root_path=str(tmp_path), adapter="evm"))

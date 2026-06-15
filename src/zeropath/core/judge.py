@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 from zeropath.core.evidence import missing_evidence
+from zeropath.core.inflation_guards import (
+    INFLATION_BUG_CLASSES,
+    GuardHit,
+    detect_share_inflation_guards,
+    summarize_guards,
+)
 from zeropath.core.schemas import CandidateFinding, JudgeResult, RejectionCheck
 from zeropath.core.storage import Storage
-
 
 FUND_IMPACT_TYPES = {
     "direct_theft",
@@ -95,6 +100,24 @@ def judge_candidate(candidate: CandidateFinding, storage: Storage | None = None)
     if funds_at_risk and not impact_measured:
         next_steps.append("Measure impact or explain the concrete funds-at-risk bound.")
 
+    anti_conditions = _detect_anti_conditions(candidate, storage)
+    # A passing PoC that measured profit beats a source-pattern guess: if the
+    # exploit demonstrably worked, treat any detected guard as a false positive.
+    anti_conditions_block = bool(anti_conditions) and not (proof_passed and impact_measured)
+    if anti_conditions and not anti_conditions_block:
+        next_steps.append(
+            f"Heuristic anti-condition(s) detected ({summarize_guards(anti_conditions)}) "
+            "but the executable PoC still demonstrates measured profit; treat as a "
+            "likely false positive and confirm the mitigation manually."
+        )
+    elif anti_conditions_block:
+        for hit in anti_conditions:
+            blocking.append(
+                f"Anti-condition detected (heuristic, {hit.name}): {hit.detail} "
+                "Donation inflation is likely mitigated; do not report without a "
+                "passing PoC that defeats it."
+            )
+
     for item in missing_evidence(evidence):
         step = f"Add evidence for {item}."
         if step not in next_steps:
@@ -134,9 +157,21 @@ def judge_candidate(candidate: CandidateFinding, storage: Storage | None = None)
 
     if storage is not None:
         storage.save_judge_result(result)
-        candidate.rejection_checks = [
+        checks = [
             RejectionCheck(check_name="judge", passed=not bool(blocking), reason="; ".join(blocking) or "no fatal blocking objections")
         ]
+        if anti_conditions:
+            checks.append(
+                RejectionCheck(
+                    check_name="anti_conditions",
+                    passed=not anti_conditions_block,
+                    reason=(
+                        f"detected (heuristic): {summarize_guards(anti_conditions)}"
+                        + ("" if not anti_conditions_block else " — likely mitigates donation inflation")
+                    ),
+                )
+            )
+        candidate.rejection_checks = checks
         if report_ready:
             candidate.status = "report_ready"
         elif _fatal_rejection(blocking):
@@ -248,6 +283,30 @@ def _unsupported_token_condition(candidate: CandidateFinding) -> bool:
     )
     scoped_terms = ("in scope", "scope includes", "deployment uses", "supported token")
     return any(term in text for term in unsupported_terms) and not any(term in text for term in scoped_terms)
+
+
+def _detect_anti_conditions(candidate: CandidateFinding, storage: Storage | None) -> list[GuardHit]:
+    """Scan the candidate's root-cause source for inflation mitigations."""
+
+    if storage is None:
+        return []
+    if (candidate.bug_class or "").lower() not in INFLATION_BUG_CLASSES:
+        return []
+    return detect_share_inflation_guards(_read_candidate_source(candidate, storage))
+
+
+def _read_candidate_source(candidate: CandidateFinding, storage: Storage) -> str:
+    seen: list[str] = []
+    for loc in candidate.root_cause_locations:
+        if loc.file and loc.file not in seen:
+            seen.append(loc.file)
+    texts: list[str] = []
+    for rel in seen:
+        try:
+            texts.append((storage.root_path / rel).read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError):
+            continue
+    return "\n".join(texts)
 
 
 def _failed_rejection_checks(candidate: CandidateFinding) -> list[str]:

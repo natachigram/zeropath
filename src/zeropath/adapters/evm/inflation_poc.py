@@ -18,7 +18,6 @@ from typing import Any
 
 from zeropath.core.schemas import CandidateFinding
 
-_VAULT_FUNCTIONS = ("deposit", "redeem", "withdraw", "totalassets")
 # `balanceOf` is intentionally absent: in many mock ERC20s it is declared as a
 # public mapping and never appears as an explicit function in the regex index.
 _ASSET_FUNCTIONS = ("mint", "transfer", "transferfrom", "approve")
@@ -196,6 +195,20 @@ contract {test_contract} {{
             : 0;
         emit Measured("attackerProfit", attackerProfit);
 
+        // Baseline: the identical flow WITHOUT the attacker donation, on a fresh
+        // vault, to quantify how many shares the victim should have received.
+        {asset} cleanToken = new {asset}();
+        {vault} cleanVault = new {vault}(cleanToken);
+        {actor} cleanAttacker = new {actor}(cleanToken, cleanVault);
+        {actor} cleanVictim = new {actor}(cleanToken, cleanVault);
+        cleanToken.mint(address(cleanAttacker), ATTACKER_DUST);
+        cleanToken.mint(address(cleanVictim), VICTIM_DEPOSIT);
+        cleanAttacker.approveVault();
+        cleanVictim.approveVault();
+        cleanAttacker.deposit(ATTACKER_DUST);
+        uint256 expectedVictimSharesWithoutDonation = cleanVictim.deposit(VICTIM_DEPOSIT);
+        emit Measured("expectedVictimSharesWithoutDonation", expectedVictimSharesWithoutDonation);
+
         require(
             attackerFinalBalance > attackerInitialBalance,
             "attacker should profit from inflation"
@@ -342,6 +355,7 @@ def apply_inflation_proof_evidence(
     attacker_profit = measured.get("attackerProfit")
     victim_shares = measured.get("victimShares")
     victim_deposit = measured.get("victimDeposit")
+    expected_victim_shares = measured.get("expectedVictimSharesWithoutDonation")
 
     impact_set = False
     if attacker_profit is not None and attacker_profit > 0:
@@ -355,6 +369,24 @@ def apply_inflation_proof_evidence(
         new_notes.append(
             f"Measured attacker profit: {attacker_profit} wei "
             f"(~{_format_ether(attacker_profit)} ether)."
+        )
+    elif (
+        victim_shares is not None
+        and expected_victim_shares is not None
+        and victim_shares < expected_victim_shares
+    ):
+        evidence.profit_measured = True
+        candidate.impact.measured = True
+        lost_shares = expected_victim_shares - victim_shares
+        candidate.impact.amount = (
+            f"victim received {victim_shares} shares vs "
+            f"{expected_victim_shares} expected without donation; "
+            f"shortfall ~{lost_shares} shares"
+        )
+        impact_set = True
+        new_notes.append(
+            f"Measured victim loss: deposit minted {victim_shares} shares vs "
+            f"{expected_victim_shares} expected without the donation."
         )
     elif (
         victim_shares is not None
@@ -387,6 +419,7 @@ def apply_inflation_proof_evidence(
         "attackerProfit",
         "victimDeposit",
         "victimShares",
+        "expectedVictimSharesWithoutDonation",
         "vaultTotalAssetsBeforeDonation",
         "vaultTotalAssetsAfterDonation",
     ):
@@ -401,14 +434,16 @@ def apply_inflation_proof_evidence(
 
     # The donation-based share inflation is a well-known bug class, but this
     # specific code path needs to be checked manually against contest disclosures.
-    if not (candidate.known_issue_risk or evidence.known_issues_checked):
+    # `unknown`/empty are the "not yet assessed" sentinels used elsewhere; treat
+    # them as unset so a passing proof can record a concrete (heuristic) risk.
+    if (candidate.known_issue_risk or "").lower() in ("", "unknown") and not evidence.known_issues_checked:
         candidate.known_issue_risk = "low"
         evidence.known_issues_checked = True
         new_notes.append(
             "Known issue check (auto): inflation class is well-known but this exact "
             "code path is treated as low risk; confirm against contest disclosures."
         )
-    if not (candidate.duplicate_risk or evidence.duplicate_risk_checked):
+    if (candidate.duplicate_risk or "").lower() in ("", "unknown") and not evidence.duplicate_risk_checked:
         candidate.duplicate_risk = "medium"
         evidence.duplicate_risk_checked = True
         new_notes.append(

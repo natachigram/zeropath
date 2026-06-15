@@ -92,3 +92,23 @@ def test_erc4626_fixture_prove_generates_passing_inflation_poc(tmp_path):
     assert "ether" in (proven.impact.amount or "")
     # The runnable copy must be discoverable by forge under test/.
     assert (fixture / "test" / "zeropath" / f"{candidate.id.replace('-', '_')}.t.sol").exists()
+    # The no-donation baseline must be measured and recorded.
+    assert any("expectedVictimSharesWithoutDonation" in note for note in proven.evidence.notes)
+
+    # judge must mark the proven candidate report-ready (no anti-condition on the
+    # vulnerable vault), and report must then export a final artifact.
+    judge_result = CliRunner().invoke(cli, ["judge", candidate.id, "--repo", str(fixture)])
+    assert judge_result.exit_code == 0, judge_result.output
+    verdict = storage.load_judge_result(candidate.id)
+    assert verdict.report_ready is True
+    assert verdict.severity == "critical"
+
+    report_result = CliRunner().invoke(
+        cli, ["report", candidate.id, "--repo", str(fixture), "--format", "code4rena"]
+    )
+    assert report_result.exit_code == 0, report_result.output
+    report_path = fixture / ".zeropath" / "artifacts" / "reports" / f"{candidate.id}_code4rena_final.md"
+    assert report_path.exists()
+    report_text = report_path.read_text()
+    assert "FINAL / REPORT READY" in report_text
+    assert "virtual shares" in report_text  # ERC4626-specific mitigation rendered
