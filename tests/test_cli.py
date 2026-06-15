@@ -220,9 +220,10 @@ def test_prove_runs_generated_candidate_test_path(tmp_path, monkeypatch):
     (tmp_path / "test").mkdir()
     calls = {}
 
-    def fake_run_forge_test(root_path, match_path=None):
+    def fake_run_forge_test(root_path, match_path=None, *, verbosity=0):
         calls["root_path"] = root_path
         calls["match_path"] = match_path
+        calls["verbosity"] = verbosity
         return {
             "ok": True,
             "status": "passed",

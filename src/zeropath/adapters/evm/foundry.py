@@ -50,3 +50,19 @@ def write_candidate_test(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(render_foundry_poc(candidate, state_plan=state_plan), encoding="utf-8")
     return path
+
+
+def write_runnable_poc(
+    root_path: str | Path,
+    candidate: CandidateFinding,
+    poc_source: str,
+) -> Path:
+    """Write an executable PoC into test/zeropath/ for forge discovery.
+
+    Always overwrites - the file is auto-generated and owned by ZeroPath.
+    """
+
+    path = candidate_test_path(root_path, candidate)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(poc_source, encoding="utf-8")
+    return path

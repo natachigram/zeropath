@@ -9,6 +9,11 @@ from zeropath.adapters.base import LanguageAdapter
 from zeropath.adapters.evm.detector import detect_evm_project
 from zeropath.adapters.evm.forge import run_forge_test
 from zeropath.adapters.evm.foundry import runnable_candidate_test_path
+from zeropath.adapters.evm.inflation_poc import (
+    InflationProofTargets,
+    detect_inflation_targets,
+    render_inflation_poc,
+)
 from zeropath.adapters.evm.invariants import suggest_evm_invariants
 from zeropath.adapters.evm.parser import EVMParser
 from zeropath.adapters.evm.poc_templates import render_foundry_poc
@@ -112,8 +117,22 @@ class EVMAdapter(LanguageAdapter):
         self,
         candidate: CandidateFinding,
         state_plan: CandidateStatePlan | None = None,
+        *,
+        poc_location: str = ".zeropath/artifacts/pocs",
     ) -> str | None:
+        targets = self.detect_inflation_targets(candidate)
+        if targets is not None:
+            return render_inflation_poc(
+                candidate, targets, poc_location=poc_location
+            )
         return render_foundry_poc(candidate, state_plan=state_plan)
+
+    def detect_inflation_targets(
+        self, candidate: CandidateFinding
+    ) -> InflationProofTargets | None:
+        """Return inflation PoC targets when the index and candidate fit."""
+
+        return detect_inflation_targets(candidate, self._index, self.root_path)
 
     def run_proof(self, candidate: CandidateFinding) -> dict[str, Any]:
         if not self.root_path:

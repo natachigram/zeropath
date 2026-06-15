@@ -16,7 +16,12 @@ def forge_available() -> bool:
     return shutil.which("forge") is not None
 
 
-def run_forge_test(root_path: str | Path, match_path: str | Path | None = None) -> dict[str, Any]:
+def run_forge_test(
+    root_path: str | Path,
+    match_path: str | Path | None = None,
+    *,
+    verbosity: int = 0,
+) -> dict[str, Any]:
     if not forge_available():
         return {"ok": False, "status": "unavailable", "message": "forge is not installed or not on PATH"}
     root = Path(root_path).resolve()
@@ -24,6 +29,9 @@ def run_forge_test(root_path: str | Path, match_path: str | Path | None = None) 
     cmd = ["forge", "test"]
     if normalized_match_path:
         cmd.extend(["--match-path", normalized_match_path])
+    if verbosity > 0:
+        clamped = min(max(verbosity, 1), 5)
+        cmd.append("-" + ("v" * clamped))
     try:
         result = subprocess.run(
             cmd,
@@ -34,7 +42,7 @@ def run_forge_test(root_path: str | Path, match_path: str | Path | None = None) 
         )
     except subprocess.TimeoutExpired as exc:
         return {"ok": False, "status": "timeout", "stdout": exc.stdout, "stderr": exc.stderr}
-    stdout = result.stdout[-12000:]
+    stdout = result.stdout[-32000:]
     stderr = result.stderr[-12000:]
     no_tests = "No tests found" in f"{stdout}\n{stderr}"
     ok = result.returncode == 0 and not no_tests

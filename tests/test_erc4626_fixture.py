@@ -1,7 +1,12 @@
 import shutil
 from pathlib import Path
 
+import pytest
+from click.testing import CliRunner
+
 from zeropath.adapters.evm import EVMAdapter
+from zeropath.adapters.evm.forge import forge_available
+from zeropath.cli import cli
 from zeropath.core.candidates import generate_candidates
 from zeropath.core.intent import build_protocol_intent
 from zeropath.core.schemas import ProjectConfig
@@ -58,3 +63,32 @@ def test_erc4626_fixture_ingests_as_vault_and_generates_share_inflation_candidat
     assert candidate.required_state
     assert any("donat" in step.lower() for step in candidate.transaction_sequence)
     assert any("victim" in step.lower() for step in candidate.transaction_sequence)
+
+
+@pytest.mark.skipif(not forge_available(), reason="forge is not installed on PATH")
+def test_erc4626_fixture_prove_generates_passing_inflation_poc(tmp_path):
+    fixture = _copy_fixture(tmp_path)
+    storage = Storage(fixture)
+    config = ProjectConfig(
+        project_id="erc4626-inflation-fixture",
+        root_path=str(fixture),
+        adapter="evm",
+        build_system="foundry",
+    )
+    storage.initialize(config)
+    index = EVMAdapter(fixture).ingest_project(config)
+    storage.save_record("ingest", "evm_index", index)
+
+    candidate = generate_candidates(storage, mode="critical", limit=5)[0]
+
+    result = CliRunner().invoke(cli, ["prove", candidate.id, "--repo", str(fixture)])
+    assert result.exit_code == 0, result.output
+
+    proven = storage.load_candidate(candidate.id)
+    assert proven.status == "poc_passed"
+    assert proven.evidence.forge_result == "passed"
+    assert proven.evidence.profit_measured is True
+    assert proven.impact.measured is True
+    assert "ether" in (proven.impact.amount or "")
+    # The runnable copy must be discoverable by forge under test/.
+    assert (fixture / "test" / "zeropath" / f"{candidate.id.replace('-', '_')}.t.sol").exists()
