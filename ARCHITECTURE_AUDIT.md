@@ -17,6 +17,7 @@ the evidence workflow.
 The new architecture lives primarily in:
 
 - `core`
+- `harness`
 - `adapters/evm`
 - `cli/commands`
 - `mcp`
@@ -58,6 +59,7 @@ experimental unless explicitly wired through the evidence-first workflow.
 | `cli/commands` | CLI/interface | Houses evidence-first command implementations. | Yes. | Yes. | Imported by `cli/main.py`. | Keep. |
 | `contest` | experimental | Runs an older contest workflow with platform formatting, LLM/spec-mining, KG, and validation. | Not stable. Could become an orchestrated wrapper only after evidence gating is stronger. | Yes. | Imported by experimental `contest` and legacy MCP tools. | Keep experimental; do not market as stable. |
 | `core` | core | Project config, storage, schemas, protocol intent, invariant catalog, candidate lifecycle, evidence scoring, state planning, judge, memory, and report export. | Yes. This is the canonical engine. | Yes. | Imported by stable CLI and canonical MCP. | Keep. |
+| `harness` | stable control plane | Durable Hunt-compatible campaign state, source/reference locks, phase checkpoints, bounded backend ports, replay receipts, seeded portable corpus cases, and shrink helpers. | Yes. It orchestrates the stable workflow without replacing candidate/evidence domain objects. | Yes. | Imported by `zeropath harness` and canonical MCP harness tools. | Keep; expand adapters only when they supply executable evidence and controls. |
 | `invariants` | legacy/experimental | Old Phase 2 invariant inference engine, detectors, spec miner, RAG helpers, and invariant models. | Partially. Invariant ideas belong, but stable invariant suggestions now live in `core/invariants.py` and `adapters/evm/invariants.py`. | Yes. | Imported by legacy `infer`, experimental `contest`, and legacy MCP. | Deprecate old CLI path; merge useful detectors into adapter/core over time. |
 | `knowledge` | memory/knowledge experimental | Contest corpus ingestion, KG stores, similarity, threat intel, temporal analysis, feedback loop. | Partially. Memory belongs, but this KG/corpus layer is older and not the stable memory router. | Yes. | Imported by legacy `kg`, experimental `contest`, and legacy MCP. | Keep experimental; do not claim real Solodit ingestion as stable. |
 | `llm` | experimental | LLM provider abstractions, prompts, reasoner, and audit corpus helpers for older contest mode. | Not stable core. LLM use should stay outside the evidence gate. | Yes. | Imported by experimental `contest`. | Keep experimental. |

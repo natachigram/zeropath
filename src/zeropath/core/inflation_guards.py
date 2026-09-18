@@ -10,10 +10,11 @@ mitigations that defeat it:
 * a first-deposit guard that forbids a tiny opening share supply
 * a deposit cap or access restriction that makes the victim path unrealistic
 
-This module scans Solidity source text for those patterns so the judge can
-block or downgrade a candidate whose target vault looks protected. Detection is
-deliberately **heuristic** (regex over source, not full semantic analysis); every
-hit is labelled ``confidence="heuristic"`` and callers must surface that.
+This module scans Solidity source text for those patterns and registers itself
+with :mod:`zeropath.core.anti_conditions` so the judge can block or downgrade a
+candidate whose target vault looks protected. Detection is deliberately
+**heuristic** (regex over source, not full semantic analysis); every hit is
+labelled ``confidence="heuristic"`` and callers must surface that.
 
 Scope: this supports the ERC4626 inflation benchmark fixture and simple
 vault-like contracts. It is not a general ERC4626 analyzer.
@@ -22,18 +23,24 @@ vault-like contracts. It is not a general ERC4626 analyzer.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+
+from zeropath.core.anti_conditions import (
+    GuardHit,
+    register_anti_conditions,
+    summarize_guards,
+)
 
 INFLATION_BUG_CLASSES = {"erc4626_share_inflation"}
 
-
-@dataclass(frozen=True)
-class GuardHit:
-    """One detected anti-condition (inflation mitigation)."""
-
-    name: str
-    detail: str
-    confidence: str = "heuristic"
+INFLATION_MITIGATIONS = [
+    "- Add virtual shares / a decimals offset to the share-price math "
+    "(e.g. OpenZeppelin ERC4626).",
+    "- Track deposited assets with internal accounting so direct donations do "
+    "not change `totalAssets()`.",
+    "- Mint a minimum initial liquidity / dead shares on the first deposit.",
+    "- Add first-deposit protection that rejects an inflatable opening share supply.",
+    "- Prefer donation-resistant accounting over reading the raw token balance.",
+]
 
 
 # A `totalAssets` function body. Vault bodies are simple (no nested braces), so a
@@ -121,17 +128,13 @@ def _internal_accounting(text_lc: str) -> bool:
     return "balanceof" not in match.group("body")
 
 
-def summarize_guards(hits: list[GuardHit]) -> str:
-    """One-line, human-readable summary of detected guards."""
-
-    if not hits:
-        return "none detected"
-    return ", ".join(f"{hit.name} ({hit.confidence})" for hit in hits)
+register_anti_conditions(INFLATION_BUG_CLASSES, detect_share_inflation_guards, INFLATION_MITIGATIONS)
 
 
 __all__ = [
     "GuardHit",
     "INFLATION_BUG_CLASSES",
+    "INFLATION_MITIGATIONS",
     "detect_share_inflation_guards",
     "summarize_guards",
 ]

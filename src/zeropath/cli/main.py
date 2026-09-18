@@ -19,6 +19,7 @@ if not hasattr(click, "Exit"):
 
 from zeropath.cli.commands.candidates import candidates as zp_candidates
 from zeropath.cli.commands.hunt import hunt as zp_hunt
+from zeropath.cli.commands.harness import harness as zp_harness
 from zeropath.cli.commands.ingest import ingest as zp_ingest
 from zeropath.cli.commands.init import init as zp_init
 from zeropath.cli.commands.judge import judge as zp_judge
@@ -95,6 +96,7 @@ def cli(ctx: click.Context, log_level: str, log_file: Optional[Path]) -> None:
     - zeropath ingest
     - zeropath understand
     - zeropath hunt
+    - zeropath harness init
     - zeropath prove
     - zeropath judge
     - zeropath report
@@ -109,6 +111,7 @@ def cli(ctx: click.Context, log_level: str, log_file: Optional[Path]) -> None:
 
 cli.add_command(zp_candidates)
 cli.add_command(zp_hunt)
+cli.add_command(zp_harness)
 cli.add_command(zp_ingest)
 cli.add_command(zp_init)
 cli.add_command(zp_memory)

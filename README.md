@@ -37,9 +37,12 @@ Stable:
 - invariant suggestions
 - candidate lifecycle
 - judge-gated reports
+- durable, resumable harness campaigns with source locks, checkpoints, coverage,
+  backend receipts, replay, and corpus shrinking
 - concrete Foundry proof generation for the ERC4626 inflation benchmark fixture
   (executable PoC, passing `forge test`, measured impact, report-ready gate);
   being generalized
+- concrete initializer-takeover proof generation for the benchmark fixture
 - heuristic ERC4626 anti-condition (inflation-mitigation) detection
 - memory router
 - MCP scaffold
@@ -59,6 +62,8 @@ Planned:
 - vector retrieval
 - Move, Solana, CosmWasm, and Cairo adapters
 - VS Code/LSP UI
+- generic ABI/state-machine synthesis and multi-language execution remain
+  explicitly unclaimed
 
 ## Architecture
 
@@ -100,6 +105,23 @@ Generate high-impact hypotheses:
 ```bash
 zeropath hunt --mode critical --limit 5
 ```
+
+Create a durable, local-only harness campaign:
+
+```bash
+zeropath harness init --repo . --seed 1
+zeropath harness run --phase hunt
+zeropath harness run --phase bank --candidate ZP-001
+zeropath harness run --phase verify --candidate ZP-001 --write-test-dir
+zeropath harness run --phase defend --candidate ZP-001
+zeropath harness status --json
+```
+
+Campaign state is stored under `.zeropath/harness/campaigns/<id>/`. It records
+the scoped source digest, reference lock, phase checkpoint, operation coverage,
+portable stateful corpus cases, backend command/output, and exact replay identity. See
+[`HARNESS_ARCHITECTURE.md`](HARNESS_ARCHITECTURE.md) for the system design and
+the intentional evidence/safety boundaries.
 
 Inspect candidates:
 
@@ -176,6 +198,10 @@ Important MCP tools include:
 - `zeropath_run_poc`
 - `zeropath_judge_candidate`
 - `zeropath_export_report`
+- `zeropath_harness_status`
+- `zeropath_harness_init`
+- `zeropath_harness_run`
+- `zeropath_harness_replay`
 - `zeropath_memory_search`
 
 Legacy MCP installer commands are still available:

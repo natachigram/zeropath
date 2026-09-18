@@ -20,6 +20,8 @@ Or via the CLI::
     zeropath mcp tools              # lists canonical evidence-first tools
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 
 from zeropath.mcp_server.install import (

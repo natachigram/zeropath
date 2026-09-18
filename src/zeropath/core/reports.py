@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from zeropath.core.anti_conditions import mitigations_for
 from zeropath.core.errors import ReportNotReadyError
 from zeropath.core.evidence import evidence_score, missing_evidence
-from zeropath.core.inflation_guards import INFLATION_BUG_CLASSES
 from zeropath.core.schemas import CandidateFinding, JudgeResult, SourceLocation
 from zeropath.core.storage import Storage
 
@@ -283,20 +283,7 @@ def _render_mitigation(candidate: CandidateFinding) -> str:
             "locations listed above."
         ),
     ]
-    if (candidate.bug_class or "").lower() in INFLATION_BUG_CLASSES:
-        lines.extend(
-            [
-                "- Add virtual shares / a decimals offset to the share-price math "
-                "(e.g. OpenZeppelin ERC4626).",
-                "- Track deposited assets with internal accounting so direct "
-                "donations do not change `totalAssets()`.",
-                "- Mint a minimum initial liquidity / dead shares on the first deposit.",
-                "- Add first-deposit protection that rejects an inflatable opening "
-                "share supply.",
-                "- Prefer donation-resistant accounting over reading the raw token "
-                "balance.",
-            ]
-        )
+    lines.extend(mitigations_for(candidate.bug_class))
     lines.extend(
         [
             (

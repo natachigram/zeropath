@@ -45,6 +45,10 @@ def build_evidence_tools(state: EvidenceMCPState) -> list[Tool]:
         _memory_write_proposal(state),
         _memory_mark_stale(state),
         _memory_refresh_stale(state),
+        _harness_status(state),
+        _harness_init(state),
+        _harness_run(state),
+        _harness_replay(state),
     ]
 
 
@@ -519,5 +523,151 @@ def _memory_refresh_stale(state: EvidenceMCPState) -> Tool:
         "zeropath_memory_refresh_stale",
         "Mark anchored memories stale when repo commits or source file hashes changed. Requires write_mode=true.",
         object_schema({"repo_path": {"type": "string"}, **WRITE_MODE}),
+        handler,
+    )
+
+
+def _harness_status(state: EvidenceMCPState) -> Tool:
+    def handler(args: dict[str, Any]) -> dict[str, Any]:
+        repo = state.repo(args)
+        log_tool_call(repo, "zeropath_harness_status", args)
+        try:
+            from zeropath.harness import HarnessController
+
+            return _ok(status=HarnessController(repo).status(args.get("campaign_id")))
+        except Exception as exc:
+            return _err(str(exc))
+
+    return Tool(
+        "zeropath_harness_status",
+        "Read the current durable harness campaign, coverage, integrity checks, and backend receipts.",
+        object_schema({"repo_path": {"type": "string"}, "campaign_id": {"type": "string"}}),
+        handler,
+    )
+
+
+def _harness_init(state: EvidenceMCPState) -> Tool:
+    def handler(args: dict[str, Any]) -> dict[str, Any]:
+        if not require_write(args):
+            return _err("write_mode=true is required to create a harness campaign")
+        repo = state.repo(args)
+        log_tool_call(repo, "zeropath_harness_init", args)
+        try:
+            from zeropath.harness import HarnessController
+
+            manifest = HarnessController(repo).initialize(
+                budget=args.get("budget", "standard"),
+                seed=int(args.get("seed", 1)),
+                backends=args.get("backends") or ("foundry",),
+                scope_paths=args.get("scope_paths") or None,
+            )
+            return _ok(campaign=manifest.model_dump(mode="json"))
+        except Exception as exc:
+            return _err(str(exc))
+
+    return Tool(
+        "zeropath_harness_init",
+        "Freeze a local-only source scope and create a resumable Hunt-compatible campaign. Requires write_mode=true.",
+        object_schema({
+            "repo_path": {"type": "string"},
+            "budget": {"type": "string", "enum": ["small", "standard", "extended"]},
+            "seed": {"type": "integer"},
+            "backends": {"type": "array", "items": {"type": "string"}},
+            "scope_paths": {"type": "array", "items": {"type": "string"}},
+            **WRITE_MODE,
+        }),
+        handler,
+    )
+
+
+def _harness_run(state: EvidenceMCPState) -> Tool:
+    def handler(args: dict[str, Any]) -> dict[str, Any]:
+        if not require_write(args):
+            return _err("write_mode=true is required to advance a harness campaign")
+        repo = state.repo(args)
+        log_tool_call(repo, "zeropath_harness_run", args)
+        try:
+            from zeropath.harness import HarnessController
+
+            controller = HarnessController(repo)
+            campaign_id = args.get("campaign_id")
+            if not campaign_id:
+                latest = controller.status().get("campaign")
+                campaign_id = latest.get("campaign_id") if latest else None
+            if not campaign_id:
+                return _err("no harness campaign found")
+            phase = args["phase"]
+            if phase == "hunt":
+                value = controller.hunt(
+                    campaign_id,
+                    mode=args.get("mode", "critical"),
+                    limit=args.get("limit"),
+                    focus=args.get("focus"),
+                )
+                return _ok(campaign_id=campaign_id, candidates=[item.model_dump(mode="json") for item in value])
+            if phase == "bank":
+                value = controller.bank(campaign_id, candidate_id=args.get("candidate_id"))
+                return _ok(campaign=value.model_dump(mode="json"))
+            if phase == "verify":
+                value = controller.verify(
+                    campaign_id,
+                    candidate_id=args.get("candidate_id"),
+                    backend=args.get("backend", "foundry"),
+                    test_path=args.get("test_path"),
+                    write_test_dir=bool(args.get("write_test_dir")),
+                    timeout_seconds=int(args.get("timeout_seconds", 120)),
+                )
+                return _ok(run=value.model_dump(mode="json") if value else None)
+            if phase == "defend":
+                value = controller.defend(campaign_id, candidate_id=args.get("candidate_id"))
+                return _ok(judge=value.model_dump(mode="json"))
+            return _err("phase must be hunt, bank, verify, or defend")
+        except Exception as exc:
+            return _err(str(exc))
+
+    return Tool(
+        "zeropath_harness_run",
+        "Advance exactly one durable local-only harness phase. Requires write_mode=true.",
+        object_schema({
+            "repo_path": {"type": "string"},
+            "campaign_id": {"type": "string"},
+            "phase": {"type": "string", "enum": ["hunt", "bank", "verify", "defend"]},
+            "candidate_id": {"type": "string"},
+            "mode": {"type": "string", "enum": ["critical", "high-medium", "qa"]},
+            "limit": {"type": "integer"},
+            "focus": {"type": "string"},
+            "backend": {"type": "string", "enum": ["foundry", "echidna", "medusa", "halmos"]},
+            "test_path": {"type": "string"},
+            "write_test_dir": {"type": "boolean"},
+            "timeout_seconds": {"type": "integer"},
+            **WRITE_MODE,
+        }, ["phase"]),
+        handler,
+    )
+
+
+def _harness_replay(state: EvidenceMCPState) -> Tool:
+    def handler(args: dict[str, Any]) -> dict[str, Any]:
+        if not require_write(args):
+            return _err("write_mode=true is required to replay a backend run")
+        repo = state.repo(args)
+        log_tool_call(repo, "zeropath_harness_replay", args)
+        try:
+            from zeropath.harness import HarnessController
+
+            run = HarnessController(repo).replay(args["campaign_id"], args["run_id"])
+            return _ok(run=run.model_dump(mode="json"))
+        except Exception as exc:
+            return _err(str(exc))
+
+    return Tool(
+        "zeropath_harness_replay",
+        "Replay one recorded backend run only if the frozen source digest still matches. Requires write_mode=true.",
+        object_schema({
+            "repo_path": {"type": "string"},
+            "campaign_id": {"type": "string"},
+            "run_id": {"type": "string"},
+            **WRITE_MODE,
+        }, ["campaign_id", "run_id"]),
         handler,
     )

@@ -2,6 +2,7 @@
 
 from zeropath.cli.commands.candidates import candidates
 from zeropath.cli.commands.hunt import hunt
+from zeropath.cli.commands.harness import harness
 from zeropath.cli.commands.ingest import ingest
 from zeropath.cli.commands.init import init
 from zeropath.cli.commands.judge import judge
@@ -15,6 +16,7 @@ from zeropath.cli.commands.understand import understand
 __all__ = [
     "candidates",
     "hunt",
+    "harness",
     "ingest",
     "init",
     "judge",

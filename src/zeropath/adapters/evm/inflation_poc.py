@@ -39,6 +39,9 @@ class InflationProofTargets:
             "source_file": self.source_file,
         }
 
+    def describe(self) -> str:
+        return f"{self.vault_contract} + {self.asset_contract} from {self.source_file}"
+
     def import_path_for(self, poc_location: str) -> str:
         """Return a relative import path resolvable from the given PoC location.
 

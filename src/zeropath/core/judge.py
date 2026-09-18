@@ -2,13 +2,8 @@
 
 from __future__ import annotations
 
+from zeropath.core.anti_conditions import GuardHit, detect_anti_conditions, summarize_guards
 from zeropath.core.evidence import missing_evidence
-from zeropath.core.inflation_guards import (
-    INFLATION_BUG_CLASSES,
-    GuardHit,
-    detect_share_inflation_guards,
-    summarize_guards,
-)
 from zeropath.core.schemas import CandidateFinding, JudgeResult, RejectionCheck
 from zeropath.core.storage import Storage
 
@@ -286,13 +281,11 @@ def _unsupported_token_condition(candidate: CandidateFinding) -> bool:
 
 
 def _detect_anti_conditions(candidate: CandidateFinding, storage: Storage | None) -> list[GuardHit]:
-    """Scan the candidate's root-cause source for inflation mitigations."""
+    """Scan the candidate's root-cause source for class-specific anti-conditions."""
 
     if storage is None:
         return []
-    if (candidate.bug_class or "").lower() not in INFLATION_BUG_CLASSES:
-        return []
-    return detect_share_inflation_guards(_read_candidate_source(candidate, storage))
+    return detect_anti_conditions(candidate.bug_class, _read_candidate_source(candidate, storage))
 
 
 def _read_candidate_source(candidate: CandidateFinding, storage: Storage) -> str:

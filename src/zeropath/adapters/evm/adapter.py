@@ -9,11 +9,7 @@ from zeropath.adapters.base import LanguageAdapter
 from zeropath.adapters.evm.detector import detect_evm_project
 from zeropath.adapters.evm.forge import run_forge_test
 from zeropath.adapters.evm.foundry import runnable_candidate_test_path
-from zeropath.adapters.evm.inflation_poc import (
-    InflationProofTargets,
-    detect_inflation_targets,
-    render_inflation_poc,
-)
+from zeropath.adapters.evm.proof_generators import ProofGenerator, ProofTargets, get_proof_generator
 from zeropath.adapters.evm.invariants import suggest_evm_invariants
 from zeropath.adapters.evm.parser import EVMParser
 from zeropath.adapters.evm.poc_templates import render_foundry_poc
@@ -120,19 +116,29 @@ class EVMAdapter(LanguageAdapter):
         *,
         poc_location: str = ".zeropath/artifacts/pocs",
     ) -> str | None:
-        targets = self.detect_inflation_targets(candidate)
-        if targets is not None:
-            return render_inflation_poc(
-                candidate, targets, poc_location=poc_location
-            )
+        proof = self.detect_proof_targets(candidate)
+        if proof is not None:
+            generator, targets = proof
+            return generator.render_poc(candidate, targets, poc_location=poc_location)
         return render_foundry_poc(candidate, state_plan=state_plan)
 
-    def detect_inflation_targets(
+    def detect_proof_targets(
         self, candidate: CandidateFinding
-    ) -> InflationProofTargets | None:
-        """Return inflation PoC targets when the index and candidate fit."""
+    ) -> tuple[ProofGenerator, ProofTargets] | None:
+        """Return the (generator, targets) for a concrete proof, if one applies.
 
-        return detect_inflation_targets(candidate, self._index, self.root_path)
+        Dispatches by ``candidate.bug_class`` through the proof-generator
+        registry; returns None when no generator matches or the index/candidate
+        do not fit the template.
+        """
+
+        generator = get_proof_generator(candidate.bug_class)
+        if generator is None:
+            return None
+        targets = generator.detect_targets(candidate, self._index, self.root_path)
+        if targets is None:
+            return None
+        return generator, targets
 
     def run_proof(self, candidate: CandidateFinding) -> dict[str, Any]:
         if not self.root_path:
